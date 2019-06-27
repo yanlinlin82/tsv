@@ -165,10 +165,21 @@ sub do_tsv_merge
 {
 	if (scalar @ARGV < 2) {
 		print "Usage: $cmd_prefix$cmd <in_1.txt> <in_2.txt>...\n";
+		print "       $cmd_prefix$cmd -f <file-list.txt>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv(shift @ARGV);
-	while (my $filename = shift @ARGV) {
+	my @in_files;
+	if ($ARGV[0] ne "-f") {
+		@in_files = @ARGV;
+	} else {
+		shift @ARGV;
+		die "Error: Missing parameter after '-f'" unless @ARGV;
+		open my $fh, "<", ($ARGV[0] eq "-" ? "/dev/stdin" : $ARGV[0]) or die "Error: Can not open file '$ARGV[0]'";
+		@in_files = map { chomp; $_ } <$fh>;
+		close $fh;
+	}
+	my $tsv = load_tsv(shift @in_files);
+	while (my $filename = shift @in_files) {
 		$tsv = merge_tsv($tsv, load_tsv($filename));
 	}
 	write_tsv($tsv);
