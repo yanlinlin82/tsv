@@ -8,6 +8,7 @@ my $version = "0.0.1";
 my $dispatcher = {
 	"align"     => { proc => \&do_tsv_align,     desc => "align columns" },
 	"cat"       => { proc => \&do_tsv_view,      desc => "show file content" },
+	"cleanup"   => { proc => \&do_tsv_cleanup,   desc => "remove empty rows or columns" },
 	"column"    => { proc => \&do_tsv_column,    desc => "list columns" },
 	"filter"    => { proc => \&do_tsv_filter,    desc => "filter by conditions" },
 	"head"      => { proc => \&do_tsv_head,      desc => "fetch head n rows" },
@@ -72,6 +73,36 @@ sub do_tsv_view
 		exit 1;
 	}
 	my $tsv = load_tsv($in_file);
+	write_tsv($tsv);
+	exit 0;
+}
+
+sub do_tsv_cleanup
+{
+	my $in_file;
+	if (scalar(@ARGV) >= 1) {
+		$in_file = shift @ARGV;
+	} elsif (not -t STDIN) {
+		$in_file = "/dev/stdin";
+	} else {
+		print "Usage: $cmd_prefix$cmd <in.txt>\n";
+		exit 1;
+	}
+	my $tsv = load_tsv($in_file);
+	@{$tsv->{names}} = grep {
+			my $x = 0;
+			for my $item (@{$tsv->{data}}) {
+				if ($item->{$_} // "") { $x = 1; last; }
+			}
+			$x;
+		} @{$tsv->{names}};
+	@{$tsv->{data}} = grep {
+			my $x = 0;
+			for my $name (@{$tsv->{names}}) {
+				if ($_->{$name} // "") { $x = 1; last; }
+			}
+			$x;
+		} @{$tsv->{data}};
 	write_tsv($tsv);
 	exit 0;
 }
