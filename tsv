@@ -885,17 +885,25 @@ sub align_tsv
 {
 	my $data = shift @_;
 	my %width = map { $_ => get_text_width($_) } @{$data->{names}};
+	my $counter = 0;
 	for my $item (@{$data->{data}}) {
 		for my $name (@{$data->{names}}) {
 			my $width = get_text_width($item->{$name});
 			$width{$name} = $width if $width{$name} < $width;
 		}
+		last if ++$counter >= 1000;
 	}
 	print join("  ", map { $_ . (" " x ($width{$_} - get_text_width($_))) } @{$data->{names}}), "\n";
 	for my $item (@{$data->{data}}) {
 		print join("  ", map {
 				my $s = $item->{$_} // "";
-				$s . (" " x ($width{$_} - get_text_width($s)))
+				my $w = get_text_width($s);
+				if ($w < $width{$_}) {
+					$s .= (" " x ($width{$_} - $w));
+				} elsif ($w > $width{$_}) {
+					$s = substr($s, 0, -3) . "...";
+				}
+				$s
 			} @{$data->{names}}), "\n";
 	}
 }
