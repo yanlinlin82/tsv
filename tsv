@@ -42,6 +42,8 @@ if (exists $dispatcher->{$cmd}) {
 sub basename { my $s = shift; $s =~ s/^.*[\/\\]//; return $s; }
 sub dirname  { my $s = shift; $s =~ s/[^\/\\]*$//; return $s; }
 
+sub df_get_names { my $d = shift; return @{$d->{names}}; }
+
 sub do_tsv_version
 {
 	print $version, "\n";
@@ -98,10 +100,10 @@ sub do_tsv_cleanup
 				if ($item->{$_} // "") { $x = 1; last; }
 			}
 			$x;
-		} @{$d->{names}};
+		} df_get_names($d);
 	@{$d->{data}} = grep {
 			my $x = 0;
-			for my $name (@{$d->{names}}) {
+			for my $name (df_get_names($d)) {
 				if ($_->{$name} // "") { $x = 1; last; }
 			}
 			$x;
@@ -125,7 +127,7 @@ sub tsv_get_columns
 sub tsv_get_column_count
 {
 	my $d = shift @_;
-	return scalar(@{$d->{names}});
+	return scalar(df_get_names($d));
 }
 
 sub tsv_get_names
@@ -404,12 +406,12 @@ sub do_tsv_select
 		exit 1;
 	}
 	my $d = load_tsv($in_file);
-	my %colname = map { $_ => 1 } @{$d->{names}};
+	my %colname = map { $_ => 1 } df_get_names($d);
 	my @names = ();
 	for my $name (split(",", $fields)) {
 		if ($name =~ /^([0-9][0-9]*)$/) {
 			my $i = $1;
-			die "Error: Unexpected column count '$i'" if $i < 1 or $i > scalar(@{$d->{names}});
+			die "Error: Unexpected column count '$i'" if $i < 1 or $i > scalar(df_get_names($d));
 			$name = $d->{names}->[$i - 1];
 		} else {
 			die "Error: Unexpected column name '$name'" unless exists $colname{$name};
@@ -512,7 +514,7 @@ sub do_tsv_transpose
 					"colname" => $name,
 					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
 				}
-			} @{$d->{names}} ]
+			} df_get_names($d) ]
 	};
 	write_tsv($res);
 	exit 0;
@@ -553,7 +555,7 @@ sub do_tsv_to_excel
 
 		my $format = $excel->add_format( bold => 1, bg_color => '#dddddd', align => 'center', border => 1 );
 		my ($row, $col) = (0, 0);
-		for my $name (@{$d->{names}}) {
+		for my $name (df_get_names($d)) {
 			$worksheet->write($row, $col++, decode("utf8", $name), $format);
 		}
 
@@ -562,7 +564,7 @@ sub do_tsv_to_excel
 		for my $item (@{$d->{data}}) {
 			$row++;
 			$col = 0;
-			for my $name (@{$d->{names}}) {
+			for my $name (df_get_names($d)) {
 				$worksheet->write($row, $col++, decode("utf8", $item->{$name}), $format);
 			}
 		}
@@ -1002,16 +1004,16 @@ sub do_tsv_summary
 	my $d = load_tsv($in_file);
 	my %results = ();
 	my @summary_fields = ("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.");
-	for my $name (@{$d->{names}}) {
+	for my $name (df_get_names($d)) {
 		$results{$name} = calc_summary($d->{data}, $name, \@summary_fields);
 	}
 	my $summary = {
-		names => [ "stat_name", @{$d->{names}} ],
+		names => [ "stat_name", df_get_names($d) ],
 		data => [ ]
 	};
 	for my $stat_name (@summary_fields) {
 		my %item = ( stat_name => $stat_name );
-		for my $name (@{$d->{names}}) {
+		for my $name (df_get_names($d)) {
 			$item{$name} = $results{$name}->{$stat_name};
 		}
 		push @{$summary->{data}}, \%item;
