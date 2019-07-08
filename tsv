@@ -5,6 +5,9 @@ use Data::Dumper;
 
 my $version = "0.0.1";
 
+my $max_align_column_width = 100;
+my $max_align_check_lines = 1000;
+
 my $dispatcher = {
 	"align"     => { proc => \&do_tsv_align,     desc => "align columns" },
 	"cat"       => { proc => \&do_tsv_view,      desc => "show file content" },
@@ -888,10 +891,13 @@ sub align_tsv
 	my $counter = 0;
 	for my $item (@{$data->{data}}) {
 		for my $name (@{$data->{names}}) {
-			my $width = get_text_width($item->{$name});
-			$width{$name} = $width if $width{$name} < $width;
+			if ($width{$name} < $max_align_column_width) {
+				my $width = get_text_width($item->{$name});
+				$width = $max_align_column_width if $width > $max_align_column_width;
+				$width{$name} = $width if $width{$name} < $width;
+			}
 		}
-		last if ++$counter >= 1000;
+		last if ++$counter >= $max_align_check_lines;
 	}
 	print join("  ", map { $_ . (" " x ($width{$_} - get_text_width($_))) } @{$data->{names}}), "\n";
 	for my $item (@{$data->{data}}) {
@@ -901,7 +907,7 @@ sub align_tsv
 				if ($w < $width{$_}) {
 					$s .= (" " x ($width{$_} - $w));
 				} elsif ($w > $width{$_}) {
-					$s = substr($s, 0, -3) . "...";
+					$s = substr($s, 0, $width{$_} - 3) . "...";
 				}
 				$s
 			} @{$data->{names}}), "\n";
