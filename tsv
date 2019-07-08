@@ -59,8 +59,8 @@ sub do_tsv_align
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
-	align_tsv($tsv);
+	my $d = load_tsv($in_file);
+	align_tsv($d);
 	exit 0;
 }
 
@@ -75,8 +75,8 @@ sub do_tsv_view
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
-	write_tsv($tsv);
+	my $d = load_tsv($in_file);
+	write_tsv($d);
 	exit 0;
 }
 
@@ -91,67 +91,67 @@ sub do_tsv_cleanup
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
-	@{$tsv->{names}} = grep {
+	my $d = load_tsv($in_file);
+	@{$d->{names}} = grep {
 			my $x = 0;
-			for my $item (@{$tsv->{data}}) {
+			for my $item (@{$d->{data}}) {
 				if ($item->{$_} // "") { $x = 1; last; }
 			}
 			$x;
-		} @{$tsv->{names}};
-	@{$tsv->{data}} = grep {
+		} @{$d->{names}};
+	@{$d->{data}} = grep {
 			my $x = 0;
-			for my $name (@{$tsv->{names}}) {
+			for my $name (@{$d->{names}}) {
 				if ($_->{$name} // "") { $x = 1; last; }
 			}
 			$x;
-		} @{$tsv->{data}};
-	write_tsv($tsv);
+		} @{$d->{data}};
+	write_tsv($d);
 	exit 0;
 }
 
 sub tsv_get_columns
 {
-	my $tsv = shift @_;
+	my $d = shift @_;
 	return {
 		names => [ "number", "colname" ],
 		data => [ map { {
 				number => $_ + 1,
-				colname => $tsv->{names}->[$_]
-			} } (0 .. $#{$tsv->{names}}) ]
+				colname => $d->{names}->[$_]
+			} } (0 .. $#{$d->{names}}) ]
 	};
 }
 
 sub tsv_get_column_count
 {
-	my $tsv = shift @_;
-	return scalar(@{$tsv->{names}});
+	my $d = shift @_;
+	return scalar(@{$d->{names}});
 }
 
 sub tsv_get_names
 {
-	my $tsv = shift @_;
-	return $tsv->{names};
+	my $d = shift @_;
+	return $d->{names};
 }
 
 sub tsv_fetch_row
 {
-	my $tsv = shift @_;
-	$tsv->{current_row} = 0 unless exists $tsv->{current_row};
-	if ($tsv->{current_row} <= $#{$tsv->{data}}) {
-		return $tsv->{data}->[$tsv->{current_row}++];
+	my $d = shift @_;
+	$d->{current_row} = 0 unless exists $d->{current_row};
+	if ($d->{current_row} <= $#{$d->{data}}) {
+		return $d->{data}->[$d->{current_row}++];
 	}
 	return undef;
 }
 
 sub tsv_sort
 {
-	my ($tsv, $column_count) = @_;
-	my $max_column_count = tsv_get_column_count($tsv);
+	my ($d, $column_count) = @_;
+	my $max_column_count = tsv_get_column_count($d);
 	$column_count = 1 if $column_count < 1;
 	$column_count = $max_column_count if $column_count > $max_column_count;
-	my $column = $tsv->{names}->[$column_count - 1];
-	@{$tsv->{data}} = sort { ($a->{$column} // "") cmp ($b->{$column} // "") } @{$tsv->{data}};
+	my $column = $d->{names}->[$column_count - 1];
+	@{$d->{data}} = sort { ($a->{$column} // "") cmp ($b->{$column} // "") } @{$d->{data}};
 }
 
 sub do_tsv_column
@@ -165,8 +165,8 @@ sub do_tsv_column
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
-	my $column = tsv_get_columns($tsv);
+	my $d = load_tsv($in_file);
+	my $column = tsv_get_columns($d);
 	write_tsv($column);
 	exit 0;
 }
@@ -189,9 +189,9 @@ sub do_tsv_sort
 		}
 		($in_file, $column_count) = ("/dev/stdin", 1);
 	}
-	my $tsv = load_tsv($in_file);
-	tsv_sort($tsv, $column_count);
-	write_tsv($tsv);
+	my $d = load_tsv($in_file);
+	tsv_sort($d, $column_count);
+	write_tsv($d);
 	exit 0;
 }
 
@@ -212,11 +212,11 @@ sub do_tsv_merge
 		@in_files = map { chomp; $_ } <$fh>;
 		close $fh;
 	}
-	my $tsv = load_tsv(shift @in_files);
+	my $d = load_tsv(shift @in_files);
 	while (my $filename = shift @in_files) {
-		$tsv = merge_tsv($tsv, load_tsv($filename));
+		$d = merge_tsv($d, load_tsv($filename));
 	}
-	write_tsv($tsv);
+	write_tsv($d);
 	exit 0;
 }
 
@@ -243,15 +243,15 @@ sub do_tsv_head
 	}
 	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
 	($sign, $num) = ($1, $2);
-	my $tsv = load_tsv($in_file);
-	my $max_num = scalar @{$tsv->{data}};
+	my $d = load_tsv($in_file);
+	my $max_num = scalar @{$d->{data}};
 	$num = $max_num if $num > $max_num;
 	if ($sign eq "-") {
-		@{$tsv->{data}} = @{$tsv->{data}}[0 .. ($max_num - $num - 1)];
+		@{$d->{data}} = @{$d->{data}}[0 .. ($max_num - $num - 1)];
 	} else {
-		@{$tsv->{data}} = @{$tsv->{data}}[0 .. ($num - 1)];
+		@{$d->{data}} = @{$d->{data}}[0 .. ($num - 1)];
 	}
-	write_tsv($tsv);
+	write_tsv($d);
 	exit 0;
 }
 
@@ -287,11 +287,11 @@ sub prepare_join_header
 
 sub prepare_join_hash
 {
-	my ($tsv, $column) = @_;
+	my ($d, $column) = @_;
 	my @values = ();
 	my %hash = ();
-	for my $i (0 .. $#{$tsv->{data}}) {
-		my $item = $tsv->{data}->[$i];
+	for my $i (0 .. $#{$d->{data}}) {
+		my $item = $d->{data}->[$i];
 		my $key = $item->{$column};
 		if (not exists $hash{$key}) {
 			push @values, $key;
@@ -308,8 +308,8 @@ sub join_merge_item
 	my ($item1, $item2, $header) = @_;
 	my %hash = ();
 	for my $h (@{$header}) {
-		my ($tsv, $name, $index) = map { $h->{$_} } ("TSV", "name", "index");
-		if ($tsv eq "left") {
+		my ($d, $name, $index) = map { $h->{$_} } ("TSV", "name", "index");
+		if ($d eq "left") {
 			$hash{$name} = $item1->{$index};
 		} else {
 			$hash{$name} = $item2->{$index};
@@ -352,8 +352,8 @@ sub do_tsv_join
 	}
 	my $tsv1 = load_tsv($left_file);
 	my $tsv2 = load_tsv($right_file);
-	my $tsv = join_tsv($tsv1, $tsv2, $column);
-	write_tsv($tsv);
+	my $d = join_tsv($tsv1, $tsv2, $column);
+	write_tsv($d);
 	exit 0;
 }
 
@@ -380,15 +380,15 @@ sub do_tsv_tail
 	}
 	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
 	($sign, $num) = ($1, $2);
-	my $tsv = load_tsv($in_file);
-	my $max_num = scalar(@{$tsv->{data}});
+	my $d = load_tsv($in_file);
+	my $max_num = scalar(@{$d->{data}});
 	$num = $max_num if $num > $max_num;
 	if ($sign eq "+") {
-		@{$tsv->{data}} = @{$tsv->{data}}[($num - 1) .. ($max_num - 1)];
+		@{$d->{data}} = @{$d->{data}}[($num - 1) .. ($max_num - 1)];
 	} else {
-		@{$tsv->{data}} = @{$tsv->{data}}[($max_num - $num) .. ($max_num - 1)];
+		@{$d->{data}} = @{$d->{data}}[($max_num - $num) .. ($max_num - 1)];
 	}
-	write_tsv($tsv);
+	write_tsv($d);
 	exit 0;
 }
 
@@ -403,20 +403,20 @@ sub do_tsv_select
 		print "Usage: $cmd_prefix$cmd <in.txt> <FIELD1,FIELD2,...>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
-	my %colname = map { $_ => 1 } @{$tsv->{names}};
+	my $d = load_tsv($in_file);
+	my %colname = map { $_ => 1 } @{$d->{names}};
 	my @names = ();
 	for my $name (split(",", $fields)) {
 		if ($name =~ /^([0-9][0-9]*)$/) {
 			my $i = $1;
-			die "Error: Unexpected column count '$i'" if $i < 1 or $i > scalar(@{$tsv->{names}});
-			$name = $tsv->{names}->[$i - 1];
+			die "Error: Unexpected column count '$i'" if $i < 1 or $i > scalar(@{$d->{names}});
+			$name = $d->{names}->[$i - 1];
 		} else {
 			die "Error: Unexpected column name '$name'" unless exists $colname{$name};
 		}
 		push @names, $name;
 	}
-	write_tsv($tsv, "/dev/stdout", "\t", \@names);
+	write_tsv($d, "/dev/stdout", "\t", \@names);
 	exit 0;
 }
 
@@ -431,19 +431,19 @@ sub do_tsv_subset
 		print "Usage: $cmd_prefix$cmd <in.txt> <ROWS1,ROW2,...>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
+	my $d = load_tsv($in_file);
 	my @rows = ();
 	for my $row (split(",", $rows)) {
 		if ($row =~ /^([0-9][0-9]*)$/) {
-			if ($row >= 1 and $row <= scalar(@{$tsv->{data}})) {
+			if ($row >= 1 and $row <= scalar(@{$d->{data}})) {
 				push @rows, $row - 1;
 			}
 		} else {
 			die "Error: Unexpected row count '$row'";
 		}
 	}
-	@{$tsv->{data}} = @{$tsv->{data}}[@rows];
-	write_tsv($tsv);
+	@{$d->{data}} = @{$d->{data}}[@rows];
+	write_tsv($d);
 	exit 0;
 }
 
@@ -481,14 +481,14 @@ sub do_tsv_filter
 		print "Usage: $cmd_prefix$cmd <in.txt> <condition>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
-	my $row_count = scalar(@{$tsv->{data}});
+	my $d = load_tsv($in_file);
+	my $row_count = scalar(@{$d->{data}});
 	my @data = ();
-	for my $item (@{$tsv->{data}}) {
+	for my $item (@{$d->{data}}) {
 		push @data, $item if parse_cond($cond, $item);
 	}
-	@{$tsv->{data}} = @data;
-	write_tsv($tsv);
+	@{$d->{data}} = @data;
+	write_tsv($d);
 	exit 0;
 }
 
@@ -503,16 +503,16 @@ sub do_tsv_transpose
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
+	my $d = load_tsv($in_file);
 	my $res = {
-		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$tsv->{data}}) ],
+		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
 		data => [ map {
 				my $name = $_;
 				{
 					"colname" => $name,
-					map { "row_" . ($_ + 1) => $tsv->{data}->[$_]->{$name} } (0 .. $#{$tsv->{data}})
+					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
 				}
-			} @{$tsv->{names}} ]
+			} @{$d->{names}} ]
 	};
 	write_tsv($res);
 	exit 0;
@@ -549,20 +549,20 @@ sub do_tsv_to_excel
 		my $worksheet = $excel->add_worksheet(decode("utf8", $name));
 		$worksheet->add_write_handler(qr[\w], \&store_string_widths);
 
-		my $tsv = load_tsv($in_tsv);
+		my $d = load_tsv($in_tsv);
 
 		my $format = $excel->add_format( bold => 1, bg_color => '#dddddd', align => 'center', border => 1 );
 		my ($row, $col) = (0, 0);
-		for my $name (@{$tsv->{names}}) {
+		for my $name (@{$d->{names}}) {
 			$worksheet->write($row, $col++, decode("utf8", $name), $format);
 		}
 
 		$worksheet->freeze_panes(1, 0); # Freeze the first row
 		$format = $excel->add_format( border => 1 );
-		for my $item (@{$tsv->{data}}) {
+		for my $item (@{$d->{data}}) {
 			$row++;
 			$col = 0;
-			for my $name (@{$tsv->{names}}) {
+			for my $name (@{$d->{names}}) {
 				$worksheet->write($row, $col++, decode("utf8", $item->{$name}), $format);
 			}
 		}
@@ -674,7 +674,7 @@ sub load_xlsx
 	}
 
 	my $counter = 0;
-	my $tsv;
+	my $d;
 	for my $sheet (@{$excel->{Worksheet}}) {
 		my @names = ();
 		my %hash = ();
@@ -692,13 +692,13 @@ sub load_xlsx
 			}
 		}
 		my $tsv2 = { names => \@names, data => \@data };
-		if (not defined $tsv) {
-			$tsv = $tsv2;
+		if (not defined $d) {
+			$d = $tsv2;
 		} else {
-			$tsv = merge_tsv($tsv, $tsv2);
+			$d = merge_tsv($d, $tsv2);
 		}
 	}
-	return $tsv;
+	return $d;
 }
 
 sub autofit_columns {
@@ -873,12 +873,12 @@ sub load_tsv
 
 sub write_tsv
 {
-	my ($tsv, $out_file, $sep, $names) = @_;
+	my ($d, $out_file, $sep, $names) = @_;
 	$sep = "\t" unless defined $sep;
-	$names = tsv_get_names($tsv) unless defined $names;
+	$names = tsv_get_names($d) unless defined $names;
 	open my $fh, ">", ($out_file // "/dev/stdout") or die "Error: Can not write to file '$out_file'";
 	print $fh join($sep, @{$names}), "\n";
-	while (my $item = tsv_fetch_row($tsv)) {
+	while (my $item = tsv_fetch_row($d)) {
 		print $fh join($sep, map { $item->{$_} // "" } (@{$names})), "\n";
 	}
 	close $fh;
@@ -999,19 +999,19 @@ sub do_tsv_summary
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
 	}
-	my $tsv = load_tsv($in_file);
+	my $d = load_tsv($in_file);
 	my %results = ();
 	my @summary_fields = ("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.");
-	for my $name (@{$tsv->{names}}) {
-		$results{$name} = calc_summary($tsv->{data}, $name, \@summary_fields);
+	for my $name (@{$d->{names}}) {
+		$results{$name} = calc_summary($d->{data}, $name, \@summary_fields);
 	}
 	my $summary = {
-		names => [ "stat_name", @{$tsv->{names}} ],
+		names => [ "stat_name", @{$d->{names}} ],
 		data => [ ]
 	};
 	for my $stat_name (@summary_fields) {
 		my %item = ( stat_name => $stat_name );
-		for my $name (@{$tsv->{names}}) {
+		for my $name (@{$d->{names}}) {
 			$item{$name} = $results{$name}->{$stat_name};
 		}
 		push @{$summary->{data}}, \%item;
