@@ -909,7 +909,7 @@ sub align_tsv
 				if ($w < $width{$_}) {
 					$s .= (" " x ($width{$_} - $w));
 				} elsif ($w > $width{$_}) {
-					$s = substr($s, 0, $width{$_} - 3) . "...";
+					$s = trim_text_at_width($s, $width{$_}, "...");
 				}
 				$s
 			} @{$data->{names}}), "\n";
@@ -928,30 +928,61 @@ sub merge_tsv
 	return { names => \@names, data => [ @{$a->{data}}, @{$b->{data}} ] };
 }
 
+sub get_character_width
+{
+	my ($s, $offset) = @_;
+	my $c = ord(substr($s, $offset, 1));
+	my ($byte_count, $width);
+	if ($c <= 0x7F) {      # U+0000 ~ U+007F: 0XXXXXXX
+		$byte_count = 1;
+		$width = 1;
+	} elsif ($c <= 0xE0) {  # U+0080 ~ U+07FF: 110XXXXX 10XXXXXX
+		$byte_count = 2;
+		$width = 2;
+	} elsif ($c <= 0xF0) {  # U+0800 ~ U+FFFF: 1110XXXX 10XXXXXX 10XXXXXX
+		my ($c1, $c2) = map { ord(substr($s, $offset + $_, 1)) } (1, 2);
+		$byte_count = 3;
+		$width = (($c == 0xE2 and ($c1 >= 0x84 and $c1 <= 0xB9) and ($c2 >= 0x80 and $c2 <= 0xBF)) ? 1 : 2);
+	} elsif ($c <= 0xF8) {  # U+10000 ~ U+1FFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX
+		$byte_count = 4;
+		$width = 2;
+	} elsif ($c <= 0xFC) {  # U+200000 ~ U+3FFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
+		$byte_count = 5;
+		$width = 2;
+	} elsif ($c <= 0xFE) {  # U+4000000 ~ U+7FFFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
+		$byte_count = 6;
+		$width = 2;
+	} else {
+		die "Unexpected UTF8 character '" . sprintf("%02X", $c) . "' at byte offset '$offset' of '$s'!";
+	}
+	die "Truncated string at byte offset '$offset' of '$s'!" if $offset + $byte_count > length($s);
+	return ($byte_count, $width);
+}
+
 sub get_text_width
 {
 	my $s = shift // "";
 	my $width = 0;
 	for (my $i = 0; $i < length($s);) {
-		my $c = ord(substr($s, $i, 1));
-		if ($c <= 0x7F) {      # U+0000 ~ U+007F: 0XXXXXXX
-			++$i; ++$width;
-		} elsif ($c <= 0xE0) {  # U+0080 ~ U+07FF: 110XXXXX 10XXXXXX
-			$i += 2; $width += 2;
-		} elsif ($c <= 0xF0) {  # U+0800 ~ U+FFFF: 1110XXXX 10XXXXXX 10XXXXXX
-			my ($c1, $c2) = map { ord(substr($s, $i + $_, 1)) } (1, 2);
-			$i += 3; $width += (($c == 0xE2 and ($c1 >= 0x84 and $c1 <= 0xB9) and ($c2 >= 0x80 and $c2 <= 0xBF)) ? 1 : 2);
-		} elsif ($c <= 0xF8) {  # U+10000 ~ U+1FFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX
-			$i += 4; $width += 2;
-		} elsif ($c <= 0xFC) {  # U+200000 ~ U+3FFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
-			$i += 5; $width += 2;
-		} elsif ($c <= 0xFE) {  # U+4000000 ~ U+7FFFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
-			$i += 6; $width += 2;
-		} else {
-			die "Unexpected UTF8 character '" . sprintf("%02X", $c) . "'!";
-		}
+		my ($byte_count, $w) = get_character_width($s, $i);
+		$i += $byte_count;
+		$width += $w;
 	}
 	return $width;
+}
+
+sub trim_text_at_width
+{
+	my ($s, $expected_width, $append_suffix) = @_;
+	my $width_upper_limit = $expected_width - get_text_width($append_suffix);
+	my ($i, $width) = (0, 0);
+	for (; $i < length($s);) {
+		my ($byte_count, $w) = get_character_width($s, $i);
+		last if $width + $byte_count > $width_upper_limit;
+		$i += $byte_count;
+		$width += $w;
+	}
+	return substr($s, 0, $i) . $append_suffix . (" " x ($width_upper_limit - $width));
 }
 
 sub quantile
