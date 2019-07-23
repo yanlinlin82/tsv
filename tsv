@@ -928,12 +928,38 @@ sub merge_tsv
 	return { names => \@names, data => [ @{$a->{data}}, @{$b->{data}} ] };
 }
 
+sub skip_characters_in_range
+{
+	my ($s, $offset, $i, $lower, $upper) = @_;
+	my $c;
+	for (;;) {
+		$c = ord(substr($s, $offset + $i, 1));
+		last unless $c >= $lower and $c <= $upper;
+		++$i;
+	}
+	return ($i, $c);
+}
+
 sub get_character_width
 {
 	my ($s, $offset) = @_;
 	my $c = ord(substr($s, $offset, 1));
 	my ($byte_count, $width);
-	if ($c <= 0x7F) {      # U+0000 ~ U+007F: 0XXXXXXX
+	if ($c == 0x1B) {  # ANSI escape code
+		my $c1 = ord(substr($s, $offset + 1, 1));
+		if ($c1 == ord('[')) {  # Control Sequence Introducer
+			my $i = 2;
+			($i, $c1) = skip_characters_in_range($s, $offset, $i, 0x30, 0x3F);
+			($i, $c1) = skip_characters_in_range($s, $offset, $i, 0x20, 0x2F);
+			die "Unexpected CSI character '" . sprintf("%02X", $c1) . "' at byte offset '" . ($offset + $i) . "' of '$s'!" unless $c1 >= 0x40 and $c1 <= 0x7E;
+			$byte_count = $i + 1;
+			$width = 0;
+		} else {
+			die "Unexpected ANSI escape code '" . sprintf("%02X", $c1) . "' at byte offset '$offset' of '$s'!" unless $c1 >= 0x40 and $c1 <= 0x5F;
+			$byte_count = 2;
+			$width = 0;
+		}
+	} elsif ($c <= 0x7F) {  # U+0000 ~ U+007F: 0XXXXXXX
 		$byte_count = 1;
 		$width = 1;
 	} elsif ($c <= 0xE0) {  # U+0080 ~ U+07FF: 110XXXXX 10XXXXXX
