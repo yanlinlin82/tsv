@@ -844,32 +844,34 @@ sub load_psl
 sub load_tsv
 {
 	my $filename = shift @_;
-	my ($mod, $con, $sep) = ("<", $filename, "\t");
-
-	$sep = "," if $filename =~ /\.csv(|\.gz|\.bz2)$/;
-
-	if ($filename =~ /\.xlsx(|:([0-9,]+))$/) { return load_xlsx($filename); }
-	if ($filename =~ /\.bed(|\.gz|\.bz2)$/) { return load_bed($filename); }
-	if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
-	my $fh = open_file($filename);
 	my @names = ();
-	my %hash = ();
 	my @data = ();
-	while (my $line = <$fh>) {
-		chomp $line;
-		if ($fh->input_line_number == 1) {
-			@names = split($sep, $line, -1);
-			@names = prepare_colnames(\@names, \%hash);
-		} else {
-			my @values = split($sep, $line, -1);
-			if ($#names < $#values) {
-				push @names, map { get_unique_name("", \%hash) } (($#names + 1) .. $#values)
+	if (defined($filename) and -e $filename) {
+		my ($mod, $con, $sep) = ("<", $filename, "\t");
+
+		$sep = "," if $filename =~ /\.csv(|\.gz|\.bz2)$/;
+
+		if ($filename =~ /\.xlsx(|:([0-9,]+))$/) { return load_xlsx($filename); }
+		if ($filename =~ /\.bed(|\.gz|\.bz2)$/) { return load_bed($filename); }
+		if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
+		my $fh = open_file($filename);
+		my %hash = ();
+		while (my $line = <$fh>) {
+			chomp $line;
+			if ($fh->input_line_number == 1) {
+				@names = split($sep, $line, -1);
+				@names = prepare_colnames(\@names, \%hash);
+			} else {
+				my @values = split($sep, $line, -1);
+				if ($#names < $#values) {
+					push @names, map { get_unique_name("", \%hash) } (($#names + 1) .. $#values)
+				}
+				my %item = map { $names[$_] => ($values[$_] // "") } (0 .. $#names);
+				push @data, \%item;
 			}
-			my %item = map { $names[$_] => ($values[$_] // "") } (0 .. $#names);
-			push @data, \%item;
 		}
+		close_file($fh);
 	}
-	close_file($fh);
 	return { names => \@names, data => \@data };
 }
 
