@@ -846,7 +846,7 @@ sub load_tsv
 	my $filename = shift @_;
 	my @names = ();
 	my @data = ();
-	if (defined($filename) and -e $filename) {
+	if (defined($filename) and (($filename eq "-" and not -t STDIN) or -e $filename)) {
 		my ($mod, $con, $sep) = ("<", $filename, "\t");
 
 		$sep = "," if $filename =~ /\.csv(|\.gz|\.bz2)$/;
