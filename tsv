@@ -841,17 +841,29 @@ sub load_psl
 	return { names => \@names, data => \@data };
 }
 
+sub is_valid_xslx_ref
+{
+	my $filename = shift;
+	if ($filename =~ /^(.*\.xlsx)(|:([0-9,]+))$/) {
+		if (-e $1) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 sub load_tsv
 {
 	my $filename = shift @_;
 	my @names = ();
 	my @data = ();
-	if (defined($filename) and (($filename eq "-" and not -t STDIN) or -e $filename)) {
+	if (defined($filename) and (($filename eq "-" and not -t STDIN) or
+			-e $filename or is_valid_xslx_ref($filename))) {
 		my ($mod, $con, $sep) = ("<", $filename, "\t");
 
 		$sep = "," if $filename =~ /\.csv(|\.gz|\.bz2)$/;
 
-		if ($filename =~ /\.xlsx(|:([0-9,]+))$/) { return load_xlsx($filename); }
+		if (is_valid_xslx_ref($filename)) { return load_xlsx($filename); }
 		if ($filename =~ /\.bed(|\.gz|\.bz2)$/) { return load_bed($filename); }
 		if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
 		my $fh = open_file($filename);
