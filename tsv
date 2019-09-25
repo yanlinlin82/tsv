@@ -639,6 +639,7 @@ sub fetch_xlsx_row
 		my $cell = $sheet->{Cells}[$row][$col];
 		my $value = ((not defined $cell) ? "" : ($cell->{Val} // ""));
 		$value =~ s{&([a-z]+);}{$decode{$1}//$1}gex;
+		$value =~ s/[\t\n\r]/ /gm;
 		push @values, $value;
 	}
 	return @values;
