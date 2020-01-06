@@ -56,7 +56,9 @@ sub print_usage_align
 Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
-   --no-header   Input file does not have header line
+   --no-header         Input file does not have header line
+   --max-width <int>   Maximum column width for each column, default: $max_align_column_width
+   --max-check <int>   Maximum checking lines for calculate column width, default: $max_align_check_lines
 
 ";
 	exit 1;
@@ -72,6 +74,10 @@ sub do_tsv_align
 				print_usage_align();
 			} elsif ($arg eq '--no-header') {
 				$no_header = 1;
+			} elsif ($arg eq '--max-width') {
+				$max_align_column_width = shift @ARGV;
+			} elsif ($arg eq '--max-check') {
+				$max_align_check_lines = shift @ARGV;
 			} else {
 				die "Error: Unknown option '$arg' for '$cmd_prefix$cmd'";
 			}
