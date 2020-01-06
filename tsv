@@ -521,18 +521,45 @@ sub do_tsv_filter
 	exit 0;
 }
 
+sub print_usage_transpose
+{
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
 sub do_tsv_transpose
 {
-	my $in_file;
-	if (scalar(@ARGV) >= 1) {
-		$in_file = shift @ARGV;
-	} elsif (not -t STDIN) {
-		$in_file = "/dev/stdin";
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt>\n";
-		exit 1;
+	my $in_file = '';
+	my $no_header = 0;
+	while (my $arg = shift @ARGV) {
+		if ($arg =~ /^-/) {
+			if ($arg eq '-h' or $arg eq '--help') {
+				print_usage_transpose();
+			} elsif ($arg eq '--no-header') {
+				$no_header = 1;
+			} else {
+				die "Error: Unknown option '$arg' for '$cmd_prefix$cmd'";
+			}
+		} elsif ($in_file eq '') {
+			$in_file = $arg;
+		} else {
+			die "Error: Unexpected parameter '$arg' for '$cmd_prefix$cmd'";
+		}
 	}
-	my $d = load_tsv($in_file);
+	if ($in_file eq '') {
+		if (-t STDIN) {
+			print_usage_align();
+		} else {
+			$in_file = '/dev/stdin';
+		}
+	}
+	my $d = load_tsv($in_file, $no_header);
 	my $res = {
 		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
 		data => [ map {
