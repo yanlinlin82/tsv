@@ -50,19 +50,46 @@ sub do_tsv_version
 	exit 0;
 }
 
+sub print_usage_align
+{
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
 sub do_tsv_align
 {
-	my $in_file;
-	if (scalar(@ARGV) >= 1) {
-		$in_file = shift @ARGV;
-	} elsif (not -t STDIN) {
-		$in_file = "/dev/stdin";
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt>\n";
-		exit 1;
+	my $in_file = '';
+	my $no_header = 0;
+	while (my $arg = shift @ARGV) {
+		if ($arg =~ /^-/) {
+			if ($arg eq '-h' or $arg eq '--help') {
+				print_usage_align();
+			} elsif ($arg eq '--no-header') {
+				$no_header = 1;
+			} else {
+				die "Error: Unknown option '$arg' for '$cmd_prefix$cmd'";
+			}
+		} elsif ($in_file eq '') {
+			$in_file = $arg;
+		} else {
+			die "Error: Unexpected parameter '$arg' for '$cmd_prefix$cmd'";
+		}
 	}
-	my $d = load_tsv($in_file);
-	align_tsv($d);
+	if ($in_file eq '') {
+		if (-t STDIN) {
+			print_usage_align();
+		} else {
+			$in_file = '/dev/stdin';
+		}
+	}
+	my $d = load_tsv($in_file, $no_header);
+	align_tsv($d, $no_header);
 	exit 0;
 }
 
@@ -855,7 +882,7 @@ sub is_valid_xslx_ref
 
 sub load_tsv
 {
-	my $filename = shift @_;
+	my ($filename, $no_header) = @_;
 	my @names = ();
 	my @data = ();
 	if (defined($filename) and (($filename eq "-" and not -t STDIN) or
@@ -871,7 +898,7 @@ sub load_tsv
 		my %hash = ();
 		while (my $line = <$fh>) {
 			chomp $line;
-			if ($fh->input_line_number == 1) {
+			if ($fh->input_line_number == 1 and not $no_header) {
 				@names = split($sep, $line, -1);
 				@names = prepare_colnames(\@names, \%hash);
 			} else {
@@ -903,8 +930,8 @@ sub write_tsv
 
 sub align_tsv
 {
-	my $data = shift @_;
-	my %width = map { $_ => get_text_width($_) } @{$data->{names}};
+	my ($data, $no_header) = @_;
+	my %width = map { $_ => ($no_header ? 0 : get_text_width($_)) } @{$data->{names}};
 	my $counter = 0;
 	for my $item (@{$data->{data}}) {
 		for my $name (@{$data->{names}}) {
@@ -916,7 +943,9 @@ sub align_tsv
 		}
 		last if ++$counter >= $max_align_check_lines;
 	}
-	print join("  ", map { $_ . (" " x ($width{$_} - get_text_width($_))) } @{$data->{names}}), "\n";
+	if (not $no_header) {
+		print join("  ", map { $_ . (" " x ($width{$_} - get_text_width($_))) } @{$data->{names}}), "\n";
+	}
 	for my $item (@{$data->{data}}) {
 		print join("  ", map {
 				my $s = $item->{$_} // "";
