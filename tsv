@@ -10,7 +10,7 @@ my $max_align_check_lines = 1000;
 
 my $dispatcher = {
 	"align"     => { proc => \&do_tsv_align,     desc => "align columns" },
-	"cat"       => { proc => \&do_tsv_view,      desc => "show file content" },
+	"cat"       => { proc => \&do_tsv_cat,       desc => "show file content" },
 	"cleanup"   => { proc => \&do_tsv_cleanup,   desc => "remove empty rows or columns" },
 	"column"    => { proc => \&do_tsv_column,    desc => "list columns" },
 	"filter"    => { proc => \&do_tsv_filter,    desc => "filter by conditions" },
@@ -25,7 +25,7 @@ my $dispatcher = {
 	"transpose" => { proc => \&do_tsv_transpose, desc => "matrix transpose" },
 	"to-excel"  => { proc => \&do_tsv_to_excel,  desc => "write to Excel (.xlsx) file" },
 	"version"   => { proc => \&do_tsv_version,   desc => "show program version" },
-	"view"      => { proc => \&do_tsv_view,      desc => "show file content, alias to 'cat'" },
+	"view"      => { proc => \&do_tsv_view,      desc => "view file content in pretty better format" },
 };
 
 my ($cmd_prefix, $cmd) = parse_cmd($0);
@@ -99,7 +99,7 @@ sub do_tsv_align
 	exit 0;
 }
 
-sub do_tsv_view
+sub do_tsv_cat
 {
 	my $in_file;
 	if (scalar(@ARGV) >= 1) {
@@ -112,6 +112,22 @@ sub do_tsv_view
 	}
 	my $d = load_tsv($in_file);
 	write_tsv($d);
+	exit 0;
+}
+
+sub do_tsv_view
+{
+	my $in_file;
+	if (scalar(@ARGV) >= 1) {
+		$in_file = shift @ARGV;
+	} elsif (not -t STDIN) {
+		$in_file = "/dev/stdin";
+	} else {
+		print "Usage: $cmd_prefix$cmd <in.txt>\n";
+		exit 1;
+	}
+	my $d = load_tsv($in_file);
+	view_tsv($d);
 	exit 0;
 }
 
@@ -580,6 +596,27 @@ sub do_tsv_transpose
 	exit 0;
 }
 
+sub view_tsv
+{
+	my $d = shift @_;
+	my $max_name_width = 0;
+	my $names = tsv_get_names($d);
+	for my $name (@{$names}) {
+		my $width = get_text_width($name);
+		$max_name_width = $width if $max_name_width < $width;
+	}
+	my $row = 0;
+	while (my $item = tsv_fetch_row($d)) {
+		print "# row " . ++$row . "\n";
+		print join("\t", align_text("column", $max_name_width), "value"), "\n";
+		for my $name (@{$names}) {
+			print join("\t", align_text($name, $max_name_width), $item->{$name}), "\n";
+		}
+		print "\n";
+	}
+	exit 0;
+}
+
 sub do_tsv_to_excel
 {
 	eval("use Encode");
@@ -961,6 +998,21 @@ sub write_tsv
 	close $fh;
 }
 
+sub align_text
+{
+	my ($s, $w) = @_;
+	$s = '' unless defined $s;
+	if ($w > 0) {
+		my $tw = get_text_width($s);
+		if ($tw < $w) {
+			$s .= (' ' x ($w - $tw));
+		} elsif ($tw > $w) {
+			$s = trim_text_at_width($s, $w, "...");
+		}
+	}
+	return $s;
+}
+
 sub align_tsv
 {
 	my ($data, $no_header) = @_;
@@ -977,19 +1029,10 @@ sub align_tsv
 		last if ++$counter >= $max_align_check_lines;
 	}
 	if (not $no_header) {
-		print join("  ", map { $_ . (" " x ($width{$_} - get_text_width($_))) } @{$data->{names}}), "\n";
+		print join("  ", map { align_text($_, $width{$_}) } @{$data->{names}}), "\n";
 	}
 	for my $item (@{$data->{data}}) {
-		print join("  ", map {
-				my $s = $item->{$_} // "";
-				my $w = get_text_width($s);
-				if ($w < $width{$_}) {
-					$s .= (" " x ($width{$_} - $w));
-				} elsif ($w > $width{$_}) {
-					$s = trim_text_at_width($s, $width{$_}, "...");
-				}
-				$s
-			} @{$data->{names}}), "\n";
+		print join("  ", map { align_text($item->{$_}, $width{$_}) } @{$data->{names}}), "\n";
 	}
 }
 
