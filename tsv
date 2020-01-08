@@ -601,6 +601,8 @@ sub view_tsv
 	my $d = shift @_;
 	my $max_name_width = 0;
 	my $names = tsv_get_names($d);
+	my $id_width = get_text_width(scalar(@{$names}) - 1);
+	my $max_id_width = ($id_width >= length('id') ? $id_width : length('id'));
 	for my $name (@{$names}) {
 		my $width = get_text_width($name);
 		$max_name_width = $width if $max_name_width < $width;
@@ -608,9 +610,16 @@ sub view_tsv
 	my $row = 0;
 	while (my $item = tsv_fetch_row($d)) {
 		print "# row " . ++$row . "\n";
-		print join("\t", align_text("column", $max_name_width), "value"), "\n";
+		print join("  ",
+			align_text('id', $max_id_width),
+			align_text('column', $max_name_width),
+			'value'), "\n";
+		my $column_id = 0;
 		for my $name (@{$names}) {
-			print join("\t", align_text($name, $max_name_width), $item->{$name}), "\n";
+			print join("  ",
+				align_text(++$column_id, $max_id_width),
+				align_text($name, $max_name_width),
+				$item->{$name}), "\n";
 		}
 		print "\n";
 	}
