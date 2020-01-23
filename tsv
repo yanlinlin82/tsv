@@ -45,14 +45,53 @@ if (exists $dispatcher->{$cmd}) {
 	unknown_cmd($cmd);
 }
 
+############################################################
+# global helper functions
+
 sub basename { my $s = shift; $s =~ s/^.*[\/\\]//; return $s; }
 sub dirname  { my $s = shift; $s =~ s/[^\/\\]*$//; return $s; }
 
-sub df_get_names { my $d = shift; return @{$d->{names}}; }
+############################################################
+# version & usages
+
+sub get_version_string
+{
+	chomp(my $hashcode = `md5sum $0`);
+	my $version_suffix = '';
+	if ($hashcode ne '') {
+		$version_suffix = " (" . substr($hashcode, 0, 7) . ")";
+	}
+	return "$VERSION$version_suffix";
+}
+
+sub print_usage
+{
+	print '
+Program: Toolkits for TSV (TAB-Separated Values) File
+Version: ' . get_version_string() . '
+Author : Linlin Yan <yanlinlin82@gmail.com>
+License: MIT 2019-2020
+
+Usage: ' . $APPNAME . ' <command> [options]
+
+Available commands:
+';
+	my $max_cmd_width = 0;
+	for my $cmd (sort keys %{$dispatcher}) {
+		if ($max_cmd_width < get_text_width($cmd)) {
+			$max_cmd_width = get_text_width($cmd);
+		}
+	}
+	for my $cmd (sort keys %{$dispatcher}) {
+		print "  " . $cmd . (" " x ($max_cmd_width - get_text_width($cmd))) . "  " . $dispatcher->{$cmd}->{desc}, "\n";
+	}
+	print "\n";
+	exit 1;
+}
 
 sub do_tsv_version
 {
-	print $VERSION, "\n";
+	print get_version_string(), "\n";
 	exit 0;
 }
 
@@ -69,6 +108,10 @@ Options:
 ";
 	exit 1;
 }
+
+############################################################
+
+sub df_get_names { my $d = shift; return @{$d->{names}}; }
 
 sub do_tsv_align
 {
@@ -687,29 +730,6 @@ sub do_tsv_to_excel
 sub unknown_cmd
 {
 	print "Error: Unknown command '$cmd'!\n";
-	exit 1;
-}
-
-sub print_usage
-{
-	print "
-Program: Toolkits for TSV (TAB-Separated Values) File
-Version: $VERSION
-
-Usage: $APPNAME <command> [options]
-
-Commands:
-";
-	my $max_cmd_width = 0;
-	for my $cmd (sort keys %{$dispatcher}) {
-		if ($max_cmd_width < get_text_width($cmd)) {
-			$max_cmd_width = get_text_width($cmd);
-		}
-	}
-	for my $cmd (sort keys %{$dispatcher}) {
-		print "  " . $cmd . (" " x ($max_cmd_width - get_text_width($cmd))) . "  " . $dispatcher->{$cmd}->{desc}, "\n";
-	}
-	print "\n";
 	exit 1;
 }
 
