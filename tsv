@@ -10,12 +10,10 @@ my $APPNAME = 'tsv';
 my $VERSION = "0.1.200124-dev";
 
 my $STDIN = '/dev/stdin';
-
-my $max_align_column_width = 100;
-my $max_align_check_lines = 1000;
+my $STDOUT = '/dev/stdout';
 
 my $dispatcher = {
-	"align"     => { proc => \&do_tsv_align,     desc => "align columns" },
+	"align"     => { proc => \&do_align,         desc => "align columns" },
 	"cat"       => { proc => \&do_tsv_cat,       desc => "show file content" },
 	"cleanup"   => { proc => \&do_tsv_cleanup,   desc => "remove empty rows or columns" },
 	"column"    => { proc => \&do_tsv_column,    desc => "list columns" },
@@ -34,22 +32,82 @@ my $dispatcher = {
 	"view"      => { proc => \&do_tsv_view,      desc => "view file content in pretty better format" },
 };
 
-my ($cmd_prefix, $cmd) = parse_cmd($0);
-if (exists $dispatcher->{$cmd}) {
-	$dispatcher->{$cmd}->{proc}->();
-} elsif ($cmd eq "install") {
-	do_install();
-} elsif ($cmd eq "test") {
-	do_test();
+my $verbose = 0;
+
+#----------------------------------------------------------#
+# main program starts from here
+
+my ($cmd_prefix, $cmd) = ($APPNAME, basename($0));
+die "Error: Unexpected command name '$cmd'" if $cmd !~ /^$APPNAME(-|$)/;
+if ($cmd eq $APPNAME) {
+	print_usage() unless @ARGV;
+	$cmd = shift @ARGV;
+	$cmd_prefix .= ' ';
 } else {
-	unknown_cmd($cmd);
+	$cmd =~ s/^$APPNAME-//;
+	$cmd_prefix .= '-';
 }
+do_install() if $cmd eq 'install';
+do_test() if $cmd eq 'test';
+print_usage() if $cmd eq 'help';
+die "Error: Unknown command '$cmd'" unless exists $dispatcher->{$cmd};
+exit $dispatcher->{$cmd}->{proc}->($cmd, @ARGV);
 
 ############################################################
 # global helper functions
 
 sub basename { my $s = shift; $s =~ s/^.*[\/\\]//; return $s; }
 sub dirname  { my $s = shift; $s =~ s/[^\/\\]*$//; return $s; }
+
+############################################################
+# args processing
+
+sub fetch_arg
+{
+	my ($opts, $name) = @_;
+	die "Error: Missing option name '$name'" if not exists $opts->{$name};
+	return ${$opts->{$name}} // '';
+}
+
+sub parse_args
+{
+	my ($cmd, $args, $func_usage, $func_opts, $vars) = @_;
+	my $i = 0;
+	while (my $arg = shift @{$args}) {
+		if ($arg =~ /^-/) {
+			if ($arg eq '-h' or $arg eq '--help') {
+				$func_usage->($cmd, $func_opts);
+			} elsif ($arg eq '-v' or $arg eq '--verbose') {
+				++$verbose;
+			} elsif (exists $func_opts->{$arg}) {
+				for (;;) {
+					my $type = ref($func_opts->{$arg});
+					if ($type eq 'CODE') {
+						$func_opts->{$arg}->($arg, $args);
+						last;
+					} elsif ($type eq 'SCALAR') {
+						die "Error: Missing option for '$arg'" if not @{$args};
+						${$func_opts->{$arg}} = shift @{$args};
+						last;
+					} else {
+						my $s = $func_opts->{$arg};
+						die "Error: Option should not point to itself" if $s eq $arg; 
+						die "Error: Unexpected value '$s'" if exists $func_opts->{$s};
+						$arg = $s;
+					}
+				}
+			} else {
+				die "Error: Unknown option '$arg'";
+			}
+		} else {
+			if ($i < scalar(@{$vars})) {
+				${$vars->[$i++]} = $arg;
+			} else {
+				die "Error: Unexpected parameter '$arg'";
+			}
+		}
+	}
+}
 
 ############################################################
 # version & usages
@@ -97,54 +155,65 @@ sub do_tsv_version
 
 sub print_usage_align
 {
+	my ($cmd, $opts) = @_;
 	print "
 Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    --no-header         Input file does not have header line
-   --max-width <int>   Maximum column width for each column, default: $max_align_column_width
-   --max-check <int>   Maximum checking lines for calculate column width, default: $max_align_check_lines
+   --max-width <int>   Maximum column width for each column, default: " . fetch_arg($opts, '--max-width') . "
+   --max-check <int>   Maximum checking lines for calculate column width, default: " . fetch_arg($opts, '--max-check') . "
 
 ";
 	exit 1;
 }
 
 ############################################################
+# data frame manipulating
 
 sub df_get_names { my $d = shift; return @{$d->{names}}; }
 
-sub do_tsv_align
+############################################################
+# commands
+
+sub do_align
 {
-	my $in_file = '';
-	my $no_header = 0;
-	while (my $arg = shift @ARGV) {
-		if ($arg =~ /^-/) {
-			if ($arg eq '-h' or $arg eq '--help') {
-				print_usage_align();
-			} elsif ($arg eq '--no-header') {
-				$no_header = 1;
-			} elsif ($arg eq '--max-width') {
-				$max_align_column_width = shift @ARGV;
-			} elsif ($arg eq '--max-check') {
-				$max_align_check_lines = shift @ARGV;
-			} else {
-				die "Error: Unknown option '$arg' for '$cmd_prefix$cmd'";
-			}
-		} elsif ($in_file eq '') {
-			$in_file = $arg;
-		} else {
-			die "Error: Unexpected parameter '$arg' for '$cmd_prefix$cmd'";
-		}
-	}
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $max_align_column_width = 100;
+	my $max_align_check_lines = 1000;
+	my $opts = {
+		'--no-header' => sub { $no_header = 1; },
+		'--max-width' => \$max_align_column_width,
+		'--max-check' => \$max_align_check_lines,
+		'-o' => \$out_file
+	};
+	parse_args($cmd, \@args, \&print_usage_align, $opts, [ \$in_file ]);
+
 	if ($in_file eq '') {
-		if (-t STDIN) {
-			print_usage_align();
-		} else {
-			$in_file = $STDIN;
-		}
+		print_usage_align($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
 	}
 	my $d = load_tsv($in_file, $no_header);
-	align_tsv($d, $no_header);
+	my %width = map { $_ => ($no_header ? 0 : get_text_width($_)) } @{$d->{names}};
+	my $counter = 0;
+	for my $item (@{$d->{data}}) {
+		for my $name (@{$d->{names}}) {
+			if ($width{$name} < $max_align_column_width) {
+				my $width = get_text_width($item->{$name});
+				$width = $max_align_column_width if $width > $max_align_column_width;
+				$width{$name} = $width if $width{$name} < $width;
+			}
+		}
+		last if ++$counter >= $max_align_check_lines;
+	}
+	if (not $no_header) {
+		print join("  ", map { align_text($_, $width{$_}) } @{$d->{names}}), "\n";
+	}
+	for my $item (@{$d->{data}}) {
+		print join("  ", map { align_text($item->{$_}, $width{$_}) } @{$d->{names}}), "\n";
+	}
 	exit 0;
 }
 
@@ -727,31 +796,6 @@ sub do_tsv_to_excel
 	}
 }
 
-sub unknown_cmd
-{
-	print "Error: Unknown command '$cmd'!\n";
-	exit 1;
-}
-
-sub parse_cmd
-{
-	my $cmd = basename(shift @_);
-	my $cmd_prefix = "";
-	if ($cmd !~ /^$APPNAME(-|$)/) {
-		print "Error: Unexpected command name '$cmd'!\n";
-		exit 1;
-	}
-	if ($cmd eq $APPNAME) {
-		print_usage() unless @ARGV;
-		$cmd = shift @ARGV;
-		$cmd_prefix = $APPNAME . ' ';
-	} else {
-		$cmd =~ s/^$APPNAME-//;
-		$cmd_prefix = $APPNAME . '-';
-	}
-	return ($cmd_prefix, $cmd);
-}
-
 sub get_unique_name
 {
 	my ($name, $hash) = @_;
@@ -1053,29 +1097,6 @@ sub align_text
 	return $s;
 }
 
-sub align_tsv
-{
-	my ($data, $no_header) = @_;
-	my %width = map { $_ => ($no_header ? 0 : get_text_width($_)) } @{$data->{names}};
-	my $counter = 0;
-	for my $item (@{$data->{data}}) {
-		for my $name (@{$data->{names}}) {
-			if ($width{$name} < $max_align_column_width) {
-				my $width = get_text_width($item->{$name});
-				$width = $max_align_column_width if $width > $max_align_column_width;
-				$width{$name} = $width if $width{$name} < $width;
-			}
-		}
-		last if ++$counter >= $max_align_check_lines;
-	}
-	if (not $no_header) {
-		print join("  ", map { align_text($_, $width{$_}) } @{$data->{names}}), "\n";
-	}
-	for my $item (@{$data->{data}}) {
-		print join("  ", map { align_text($item->{$_}, $width{$_}) } @{$data->{names}}), "\n";
-	}
-}
-
 sub merge_tsv
 {
 	my ($a, $b) = @_;
@@ -1249,16 +1270,16 @@ sub do_install
 			print STDERR "Symbolic link '$name' created.\n";
 		}
 	}
+	print STDERR "All symbolic links are created.\n";
 	eval("use Excel::Writer::XLSX");
 	print STDERR "Warning: Perl module 'Excel::Writer::XLSX' is required for writing Excel files\n" if $@;
 	eval("use Spreadsheet::XLSX");
 	print STDERR "Warning: Perl module 'Spreadsheet::XLSX' is required for reading Excel files\n" if $@;
-	print STDERR "Installation done.\n";
+	exit 0;
 }
 
 sub do_test
 {
-	my $verbose = (($ARGV[0] // "") eq "-v");
 	my ($total, $ok, $failed) = (0, 0, 0);
 	chdir(dirname($0));
 	foreach my $script (glob("test/*.sh")) {
@@ -1277,4 +1298,5 @@ sub do_test
 		close $fh;
 	}
 	print STDERR "Total $total test(s), $ok passed and $failed failed.\n";
+	exit 0;
 }
