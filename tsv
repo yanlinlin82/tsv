@@ -1,9 +1,15 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 use strict;
 use warnings;
 use Data::Dumper;
 
-my $version = "0.0.1";
+############################################################
+# global variables
+
+my $APPNAME = 'tsv';
+my $VERSION = "0.1.200124-dev";
+
+my $STDIN = '/dev/stdin';
 
 my $max_align_column_width = 100;
 my $max_align_check_lines = 1000;
@@ -46,7 +52,7 @@ sub df_get_names { my $d = shift; return @{$d->{names}}; }
 
 sub do_tsv_version
 {
-	print $version, "\n";
+	print $VERSION, "\n";
 	exit 0;
 }
 
@@ -91,7 +97,7 @@ sub do_tsv_align
 		if (-t STDIN) {
 			print_usage_align();
 		} else {
-			$in_file = '/dev/stdin';
+			$in_file = $STDIN;
 		}
 	}
 	my $d = load_tsv($in_file, $no_header);
@@ -105,7 +111,7 @@ sub do_tsv_cat
 	if (scalar(@ARGV) >= 1) {
 		$in_file = shift @ARGV;
 	} elsif (not -t STDIN) {
-		$in_file = "/dev/stdin";
+		$in_file = $STDIN;
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
@@ -121,7 +127,7 @@ sub do_tsv_view
 	if (scalar(@ARGV) >= 1) {
 		$in_file = shift @ARGV;
 	} elsif (not -t STDIN) {
-		$in_file = "/dev/stdin";
+		$in_file = $STDIN;
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
@@ -137,7 +143,7 @@ sub do_tsv_cleanup
 	if (scalar(@ARGV) >= 1) {
 		$in_file = shift @ARGV;
 	} elsif (not -t STDIN) {
-		$in_file = "/dev/stdin";
+		$in_file = $STDIN;
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
@@ -211,7 +217,7 @@ sub do_tsv_column
 	if (scalar(@ARGV) >= 1) {
 		$in_file = shift @ARGV;
 	} elsif (not -t STDIN) {
-		$in_file = "/dev/stdin";
+		$in_file = $STDIN;
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
@@ -229,7 +235,7 @@ sub do_tsv_sort
 		($in_file, $column_count) = @ARGV;
 	} elsif (scalar(@ARGV) == 1) {
 		if (not -t STDIN) {
-			($in_file, $column_count) = ("/dev/stdin", $ARGV[0]);
+			($in_file, $column_count) = ($STDIN, $ARGV[0]);
 		} else {
 			($in_file, $column_count) = ($ARGV[0], 1);
 		}
@@ -238,7 +244,7 @@ sub do_tsv_sort
 			print "Usage: $cmd_prefix$cmd <in.txt> [column_count]\n";
 			exit 1;
 		}
-		($in_file, $column_count) = ("/dev/stdin", 1);
+		($in_file, $column_count) = ($STDIN, 1);
 	}
 	my $d = load_tsv($in_file);
 	tsv_sort($d, $column_count);
@@ -259,7 +265,7 @@ sub do_tsv_merge
 	} else {
 		shift @ARGV;
 		die "Error: Missing parameter after '-f'" unless @ARGV;
-		open my $fh, "<", ($ARGV[0] eq "-" ? "/dev/stdin" : $ARGV[0]) or die "Error: Can not open file '$ARGV[0]'";
+		open my $fh, "<", ($ARGV[0] eq "-" ? $STDIN : $ARGV[0]) or die "Error: Can not open file '$ARGV[0]'";
 		@in_files = map { chomp; $_ } <$fh>;
 		close $fh;
 	}
@@ -278,7 +284,7 @@ sub do_tsv_head
 		($in_file, $num) = @ARGV;
 	} elsif (scalar(@ARGV) == 1) {
 		if (not -t STDIN) {
-			($in_file, $num) = ("/dev/stdin", $ARGV[0]);
+			($in_file, $num) = ($STDIN, $ARGV[0]);
 		} else {
 			($in_file, $num) = ($ARGV[0], 10);
 		}
@@ -290,7 +296,7 @@ sub do_tsv_head
 			print "  2. if 'NUM' is leading with '-', print all but the last NUM lines\n";
 			exit 1;
 		}
-		($in_file, $num) = ("/dev/stdin", 10);
+		($in_file, $num) = ($STDIN, 10);
 	}
 	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
 	($sign, $num) = ($1, $2);
@@ -396,7 +402,7 @@ sub do_tsv_join
 	if (scalar(@ARGV) >= 3) {
 		($left_file, $right_file, $column) = @ARGV;
 	} elsif (scalar(@ARGV) == 2 and not -t STDIN) {
-		($left_file, $right_file, $column) = ("/dev/stdin", @ARGV);
+		($left_file, $right_file, $column) = ($STDIN, @ARGV);
 	} else {
 		print "Usage: $cmd_prefix$cmd <in-left.txt> <in-right.txt> <column>\n";
 		exit 1;
@@ -415,7 +421,7 @@ sub do_tsv_tail
 		($in_file, $num) = @ARGV;
 	} elsif (scalar(@ARGV) == 1) {
 		if (not -t STDIN) {
-			($in_file, $num) = ("/dev/stdin", $ARGV[0]);
+			($in_file, $num) = ($STDIN, $ARGV[0]);
 		} else {
 			($in_file, $num) = ($ARGV[0], 10);
 		}
@@ -427,7 +433,7 @@ sub do_tsv_tail
 			print "  2. if 'NUM' is leading with '+', print lines starting with line NUM\n";
 			exit 1;
 		}
-		($in_file, $num) = ("/dev/stdin", 10);
+		($in_file, $num) = ($STDIN, 10);
 	}
 	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
 	($sign, $num) = ($1, $2);
@@ -449,7 +455,7 @@ sub do_tsv_select
 	if (scalar(@ARGV) >= 2) {
 		($in_file, $fields) = @ARGV;
 	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $fields) = ("/dev/stdin", $ARGV[0]);
+		($in_file, $fields) = ($STDIN, $ARGV[0]);
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt> <FIELD1,FIELD2,...>\n";
 		exit 1;
@@ -477,7 +483,7 @@ sub do_tsv_subset
 	if (scalar(@ARGV) >= 2) {
 		($in_file, $rows) = @ARGV;
 	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $rows) = ("/dev/stdin", $ARGV[0]);
+		($in_file, $rows) = ($STDIN, $ARGV[0]);
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt> <ROWS1,ROW2,...>\n";
 		exit 1;
@@ -527,7 +533,7 @@ sub do_tsv_filter
 	if (scalar(@ARGV) >= 2) {
 		($in_file, $cond) = @ARGV;
 	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $cond) = ("/dev/stdin", $ARGV[0]);
+		($in_file, $cond) = ($STDIN, $ARGV[0]);
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt> <condition>\n";
 		exit 1;
@@ -578,7 +584,7 @@ sub do_tsv_transpose
 		if (-t STDIN) {
 			print_usage_align();
 		} else {
-			$in_file = '/dev/stdin';
+			$in_file = $STDIN;
 		}
 	}
 	my $d = load_tsv($in_file, $no_header);
@@ -686,10 +692,14 @@ sub unknown_cmd
 
 sub print_usage
 {
-	print "Program: Toolkits for TSV (TAB-Separated Values) File\n";
-	print "Version: $version\n";
-	print "Usage: tsv <command> [options]\n";
-	print "Commands:\n";
+	print "
+Program: Toolkits for TSV (TAB-Separated Values) File
+Version: $VERSION
+
+Usage: $APPNAME <command> [options]
+
+Commands:
+";
 	my $max_cmd_width = 0;
 	for my $cmd (sort keys %{$dispatcher}) {
 		if ($max_cmd_width < get_text_width($cmd)) {
@@ -699,6 +709,7 @@ sub print_usage
 	for my $cmd (sort keys %{$dispatcher}) {
 		print "  " . $cmd . (" " x ($max_cmd_width - get_text_width($cmd))) . "  " . $dispatcher->{$cmd}->{desc}, "\n";
 	}
+	print "\n";
 	exit 1;
 }
 
@@ -706,17 +717,17 @@ sub parse_cmd
 {
 	my $cmd = basename(shift @_);
 	my $cmd_prefix = "";
-	if ($cmd !~ /^tsv(-|$)/) {
+	if ($cmd !~ /^$APPNAME(-|$)/) {
 		print "Error: Unexpected command name '$cmd'!\n";
 		exit 1;
 	}
-	if ($cmd eq "tsv") {
+	if ($cmd eq $APPNAME) {
 		print_usage() unless @ARGV;
 		$cmd = shift @ARGV;
-		$cmd_prefix = "tsv ";
+		$cmd_prefix = $APPNAME . ' ';
 	} else {
-		$cmd =~ s/^tsv-//;
-		$cmd_prefix = "tsv-";
+		$cmd =~ s/^$APPNAME-//;
+		$cmd_prefix = $APPNAME . '-';
 	}
 	return ($cmd_prefix, $cmd);
 }
@@ -866,7 +877,7 @@ sub open_file
 	my $filename = shift @_;
 	my ($mod, $con) = ("<", $filename);
 	die "Error: '$filename' is a directory" if -d $filename;
-	if    ($filename eq "-"     ) { $mod = "<";  $con = "/dev/stdin"; }
+	if    ($filename eq "-"     ) { $mod = "<";  $con = $STDIN; }
 	elsif ($filename =~ /\.gz$/ ) { $mod = "-|"; $con = "zcat '$filename'"; }
 	elsif ($filename =~ /\.bz2$/) { $mod = "-|"; $con = "bzcat '$filename'"; }
 	elsif ($filename =~ /\.zip$/) { $mod = "-|"; $con = "unzip -p '$filename'"; }
@@ -1182,7 +1193,7 @@ sub do_tsv_summary
 	if (scalar(@ARGV) >= 1) {
 		$in_file = shift @ARGV;
 	} elsif (not -t STDIN) {
-		$in_file = "/dev/stdin";
+		$in_file = $STDIN;
 	} else {
 		print "Usage: $cmd_prefix$cmd <in.txt>\n";
 		exit 1;
@@ -1212,9 +1223,9 @@ sub do_install
 {
 	my $dir = dirname($0);
 	for my $cmd (sort keys %{$dispatcher}) {
-		my $name = $dir . "tsv-" . $cmd;
+		my $name = $dir . $APPNAME . '-' . $cmd;
 		unless (-e $name) {
-			symlink "tsv", $name or die "Error: Can not create symbolic link '$name'!";
+			symlink $APPNAME, $name or die "Error: Can not create symbolic link '$name'!";
 			print STDERR "Symbolic link '$name' created.\n";
 		}
 	}
