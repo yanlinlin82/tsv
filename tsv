@@ -835,24 +835,34 @@ sub write_tsv
 	my ($d, $out_file, $opts) = @_;
 	my $sep = $opts->{sep} // "\t";
 	my $no_header = $opts->{no_header} // 0;
-	my $columns = $opts->{columns};
+	my $col_index = $opts->{col_index};
 	my $show_row_numbers = $opts->{show_row_numbers} // 0;
 	my @names;
-	if (not exists $opts->{columns}) {
+	if (not exists $opts->{col_index}) {
 		@names = @{$d->{names}};
 	} else {
-		@names = map { $d->{names}->[$_ - 1] } @{$opts->{columns}};
+		@names = map { $d->{names}->[$_ - 1] } @{$opts->{col_index}};
 	}
 	open my $fh, ">", $out_file or die "Error: Can not write to file '$out_file'";
 	print $fh "\t" if $show_row_numbers;
 	print $fh join($sep, @names), "\n" unless $no_header;
-	my $row_number = 0;
-	while (my $item = tsv_fetch_row($d)) {
-		++$row_number;
-		next if exists $opts->{filter} and not check_filter_ok($item, $opts->{filter});
-		next if exists $opts->{remove_na} and has_na($item, \@names);
-		print $fh $row_number, "\t" if $show_row_numbers;
-		print $fh join($sep, map { $item->{$_} // '' } (@names)), "\n";
+	if (exists $opts->{row_index}) {
+		for my $r (@{$opts->{row_index}}) {
+			my ($a, $b) = ($r->{start}, $r->{end});
+			my $delta = ($a <= $b ? 1 : -1);
+			for (my $i = $a; $i != $b + $delta; $i += $delta) {
+				print $fh join($sep, map { $d->{data}->[$i - 1]->{$_} // '' } @names), "\n";
+			}
+		}
+	} else {
+		my $row_number = 0;
+		while (my $item = tsv_fetch_row($d)) {
+			++$row_number;
+			next if exists $opts->{filter} and not check_filter_ok($item, $opts->{filter});
+			next if exists $opts->{remove_na} and has_na($item, \@names);
+			print $fh $row_number, "\t" if $show_row_numbers;
+			print $fh join($sep, map { $item->{$_} // '' } (@names)), "\n";
+		}
 	}
 	close $fh;
 }
@@ -1088,24 +1098,6 @@ sub write_transpose
 	write_tsv($res, $out_file);
 }
 
-sub write_tsv_rows
-{
-	my ($d, $no_header, $out_file, $rows) = @_;
-	my $sep = "\t";
-
-	open my $fh, ">", $out_file or die "Error: Can not write to file '$out_file'";
-	my @names = @{$d->{names}};
-	print $fh join($sep, @names), "\n" unless $no_header;
-	for my $item (@{$rows}) {
-		my ($a, $b) = ($item->{start}, $item->{end});
-		my $delta = ($a <= $b ? 1 : -1);
-		for (my $i = $a; $i != $b + $delta; $i += $delta) {
-			print $fh join($sep, map { $d->{data}->[$i - 1]->{$_} // '' } @names), "\n";
-		}
-	}
-	close $fh;
-}
-
 sub expand_row_index
 {
 	my ($x, $n) = @_;
@@ -1286,7 +1278,7 @@ sub do_select
 	my $d = load_tsv($in_file, $no_header);
 	my %dict = map { $_ => 1 } @{$d->{names}};
 	my @col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
-	write_tsv($d, $out_file, { no_header => $no_header, columns => \@col_index });
+	write_tsv($d, $out_file, { no_header => $no_header, col_index => \@col_index });
 	exit 0;
 }
 
@@ -1311,7 +1303,7 @@ sub do_select_rows
 	my $d = load_tsv($in_file, $no_header);
 	my $n = scalar(@{$d->{data}});
 	my @row_index = map { expand_row_index($_, $n) } (@rows);
-	write_tsv_rows($d, $no_header, $out_file, \@row_index);
+	write_tsv($d, $out_file, { no_header => $no_header, row_index => \@row_index });
 	exit 0;
 }
 
@@ -1343,7 +1335,7 @@ sub do_head
 		$row_count = -$n if $row_count < -$n;
 		push @row_index, { start => 1, end => $n + $row_count } if $row_count > -$n;
 	}
-	write_tsv_rows($d, $no_header, $out_file, \@row_index);
+	write_tsv($d, $out_file, { no_header => $no_header, row_index => \@row_index });
 	exit 0;
 }
 
@@ -1375,7 +1367,7 @@ sub do_tail
 		$row_count = -$n if $row_count < -$n;
 		push @row_index, { start => 1 - $row_count, end => $n } if $row_count > -$n;
 	}
-	write_tsv_rows($d, $no_header, $out_file, \@row_index);
+	write_tsv($d, $out_file, { no_header => $no_header, row_index => \@row_index });
 	exit 0;
 }
 
@@ -1430,7 +1422,7 @@ sub do_cleanup
 		}
 		push @col_index, $i + 1 if $has_data;
 	}
-	write_tsv($d, $STDOUT, { columns => \@col_index, remove_na => 1 });
+	write_tsv($d, $STDOUT, { col_index => \@col_index, remove_na => 1 });
 	exit 0;
 }
 
