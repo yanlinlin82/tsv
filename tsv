@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 use warnings;
-eval("use Data::Dumper");
+BEGIN { eval 'use Data::Dumper' };
 
 ############################################################
 # global variables
@@ -24,7 +24,7 @@ my $dispatcher = {
 	"tail"        => \&do_tail,
 	"filter"      => \&do_filter,
 	"cleanup"     => \&do_cleanup,
-	"sort"        => \&do_tsv_sort,
+	"sort"        => \&do_sort,
 	"merge"       => \&do_tsv_merge,
 	"join"        => \&do_tsv_join,
 	"summary"     => \&do_tsv_summary,
@@ -75,7 +75,7 @@ sub parse_args
 	my ($cmd, $args, $func_usage, $func_opts, $vars, $rest_args) = @_;
 	my $i = 0;
 	my $parse_dash = 1;
-	while (my $arg = shift @{$args}) {
+	while (defined(my $arg = shift @{$args})) {
 		if ($parse_dash and $arg =~ /^-.+/) {
 			if ($arg eq '--') {
 				$parse_dash = 0;
@@ -382,6 +382,37 @@ Options:
 	exit 1;
 }
 
+sub print_usage_sort
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt> <columns>...
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+Notes:
+  1. <columns> can be either numbers or names, separated by space.
+     e.g.:  $cmd_prefix$cmd in.txt 2
+            $cmd_prefix$cmd in.txt 2 3
+            $cmd_prefix$cmd in.txt age
+            $cmd_prefix$cmd in.txt age sex
+            $cmd_prefix$cmd in.txt 2 sex
+  2. suffix '+' or '-' can be appended to column numbers/names to specify
+     the sorting order, ascending or descending.
+     e.g.:  $cmd_prefix$cmd in.txt 2+ 3-
+            $cmd_prefix$cmd in.txt age+ sex-
+  3. suffix 'n' can be appended to column numbers/names (after '+' or '-')
+     to specify treating column value as number when sorting.
+     e.g.:  $cmd_prefix$cmd in.txt 2+n
+            $cmd_prefix$cmd in.txt age+n
+
+";
+	exit 1;
+}
+
 sub print_usage_to_csv
 {
 	my ($cmd, $opts) = @_;
@@ -408,6 +439,48 @@ sub tsv_fetch_row
 		return $d->{data}->[$d->{current_row}++];
 	}
 	return undef;
+}
+
+sub build_sorter
+{
+	my ($columns, $names) = @_;
+	my $n = scalar(@{$names});
+	my %index = map { $_ => 1 } @{$names};
+	my @sorter = ();
+	for my $col (@{$columns}) {
+		if (exists $index{$col}) {
+			push @sorter, { name => $col, order => '+', type => 'string' };
+		} elsif ($col =~ /^(.+?)([+-]?)(n?)$/) {
+			my ($name, $order, $type) = ($1, $2, $3);
+			print STDERR "($name)($order)($type)\n";
+			if ($name =~ /^[0-9]+$/) {
+				die "Error: Invalid row number '$name'! It should be between 1 and $n" if $name < 1 or $name > $n;
+				$name = $names->[$name - 1];
+			}
+			die "Error: Unknown column '$name'" if not exists $index{$name};
+			push @sorter, { name => $name, order => $order // '+', type => ($type eq 'n' ? 'number' : 'string') };
+		} else {
+			die "Error: Invalid sort option '$col'";
+		}
+	}
+	return sub {
+		my ($a, $b) = @_;
+		my $n = 0;
+		for my $s (@sorter) {
+			my $name = $s->{name};
+			my ($left, $right) = ($a->{$name}, $b->{$name});
+			($left, $right) = ($right, $left) if $s->{order} eq '-';
+			if ($s->{type} eq 'string') {
+				$n = ($left cmp $right);
+			} else {
+				$left =~ s/^[^0-9]*([0-9]+).*$/$1/;
+				$right =~ s/^[^0-9]*([0-9]+).*$/$1/;
+				$n = ($left <=> $right);
+			}
+			last if $n != 0;
+		}
+		return $n;
+	};
 }
 
 sub tsv_sort
@@ -876,6 +949,12 @@ sub write_tsv
 			for (my $i = $a; $i != $b + $delta; $i += $delta) {
 				print $fh join($sep, map { $d->{data}->[$i - 1]->{$_} // '' } @names), "\n";
 			}
+		}
+	} elsif (exists $opts->{sorter}) {
+		my $data = $d->{data};
+		my @rows = sort { $opts->{sorter}->($data->[$a], $data->[$b]) } (0 .. $#{$data});
+		for my $i (@rows) {
+			print $fh join($sep, map { $d->{data}->[$i]->{$_} // '' } @names), "\n";
 		}
 	} else {
 		my $row_number = 0;
@@ -1381,10 +1460,10 @@ sub do_tail
 		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
-	parse_args($cmd, \@args, \&print_usage_head, $opts, [ \$in_file ]);
+	parse_args($cmd, \@args, \&print_usage_tail, $opts, [ \$in_file ]);
 
 	if ($in_file eq '') {
-		print_usage_head($cmd, $opts) if -t STDIN;
+		print_usage_tail($cmd, $opts) if -t STDIN;
 		$in_file = $STDIN;
 	}
 
@@ -1460,27 +1539,27 @@ sub do_cleanup
 	exit 0;
 }
 
-sub do_tsv_sort
+sub do_sort
 {
-	my ($in_file, $column_count);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $column_count) = @ARGV;
-	} elsif (scalar(@ARGV) == 1) {
-		if (not -t STDIN) {
-			($in_file, $column_count) = ($STDIN, $ARGV[0]);
-		} else {
-			($in_file, $column_count) = ($ARGV[0], 1);
-		}
-	} else {
-		if (-t STDIN) {
-			print "Usage: $cmd_prefix$cmd <in.txt> [column_count]\n";
-			exit 1;
-		}
-		($in_file, $column_count) = ($STDIN, 1);
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'--no-header' => sub { $no_header = 1; },
+		'-s' => \$sep,
+		'-o' => \$out_file
+	};
+	my @columns = ();
+	parse_args($cmd, \@args, \&print_usage_sort, $opts, [ \$in_file ], \@columns);
+
+	if ($in_file eq '') {
+		print_usage_sort($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
 	}
-	my $d = load_tsv($in_file);
-	tsv_sort($d, $column_count);
-	write_tsv($d, $STDOUT);
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	my $sorter = build_sorter(\@columns, $d->{names});
+	write_tsv($d, $STDOUT, { sorter => $sorter });
 	exit 0;
 }
 
