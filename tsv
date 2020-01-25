@@ -21,7 +21,7 @@ my $dispatcher = {
 	"select"      => \&do_select,
 	"select-rows" => \&do_select_rows,
 	"head"        => \&do_head,
-	"tail"        => \&do_tsv_tail,
+	"tail"        => \&do_tail,
 	"filter"      => \&do_tsv_filter,
 	"cleanup"     => \&do_cleanup,
 	"sort"        => \&do_tsv_sort,
@@ -301,6 +301,25 @@ Options:
 Note:
   1. if '-n <INT>' is leading with '-', it will print all but the last <INT> lines.
      e.g.: $cmd_prefix in.txt -n-10  # remove last 10 lines.
+
+";
+	exit 1;
+}
+
+sub print_usage_tail
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -n <INT>      Show last n rows, default: " . fetch_arg($opts, '-n') . "
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   --no-header   Input file does not have header line
+
+Note:
+  1. if '-n <INT>' is leading with '-', it will print all but the first <INT> lines.
+     e.g.: $cmd_prefix in.txt -n-10  # remove first 10 lines.
 
 ";
 	exit 1;
@@ -1253,38 +1272,35 @@ sub do_head
 	exit 0;
 }
 
-sub do_tsv_tail
+sub do_tail
 {
-	my ($in_file, $num, $sign);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $num) = @ARGV;
-	} elsif (scalar(@ARGV) == 1) {
-		if (not -t STDIN) {
-			($in_file, $num) = ($STDIN, $ARGV[0]);
-		} else {
-			($in_file, $num) = ($ARGV[0], 10);
-		}
-	} else {
-		if (-t STDIN) {
-			print "Usage: $cmd_prefix$cmd <in.txt> [NUM]\n";
-			print "Note:\n";
-			print "  1. 'NUM' should be an integer number (defaults to 10), print the last NUM lines\n";
-			print "  2. if 'NUM' is leading with '+', print lines starting with line NUM\n";
-			exit 1;
-		}
-		($in_file, $num) = ($STDIN, 10);
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $row_count, $no_header, $out_file) = ('', 10, 0, $STDOUT);
+	my $opts = {
+		'-n' => \$row_count,
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_head, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_head($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
 	}
-	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
-	($sign, $num) = ($1, $2);
-	my $d = load_tsv($in_file);
-	my $max_num = scalar(@{$d->{data}});
-	$num = $max_num if $num > $max_num;
-	if ($sign eq "+") {
-		@{$d->{data}} = @{$d->{data}}[($num - 1) .. ($max_num - 1)];
-	} else {
-		@{$d->{data}} = @{$d->{data}}[($max_num - $num) .. ($max_num - 1)];
+
+	my $d = load_tsv($in_file, $no_header);
+	die "Error: Invalid value '$row_count' for '-n'" if $row_count !~ /^[-+]?[0-9]+$/;
+	my $n = scalar(@{$d->{data}});
+	my @row_index = ();
+	if ($row_count > 0) {
+		$row_count = $n if $row_count > $n;
+		push @row_index, { start => $n - $row_count + 1, end => $n };
+	} elsif ($row_count < 0) {
+		$row_count = -$n if $row_count < -$n;
+		push @row_index, { start => 1 - $row_count, end => $n };
 	}
-	write_tsv($d, $STDOUT);
+	write_tsv_rows($d, $no_header, $out_file, \@row_index);
 	exit 0;
 }
 
