@@ -177,6 +177,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -n            Show row numbers
    --no-header   Input file does not have header line
 
 ";
@@ -721,17 +722,23 @@ sub load_tsv
 
 sub write_tsv
 {
-	my ($d, $no_header, $out_file, $sep, $columns) = @_;
-	$sep = "\t" unless defined $sep;
+	my ($d, $out_file, $opts) = @_;
+	my $sep = $opts->{sep} // "\t";
+	my $no_header = $opts->{no_header} // 0;
+	my $columns = $opts->{columns};
+	my $show_row_numbers = $opts->{show_row_numbers} // 0;
 	my @names;
-	if (not defined $columns) {
+	if (not exists $opts->{columns}) {
 		@names = @{$d->{names}};
 	} else {
-		@names = map { $d->{names}->[$_ - 1] } @{$columns};
+		@names = map { $d->{names}->[$_ - 1] } @{$opts->{columns}};
 	}
 	open my $fh, ">", $out_file or die "Error: Can not write to file '$out_file'";
+	print $fh "\t" if $show_row_numbers;
 	print $fh join($sep, @names), "\n" unless $no_header;
+	my $row_number = 0;
 	while (my $item = tsv_fetch_row($d)) {
+		print $fh ++$row_number, "\t" if $show_row_numbers;
 		print $fh join($sep, map { $item->{$_} // '' } (@names)), "\n";
 	}
 	close $fh;
@@ -949,7 +956,7 @@ sub write_column
 				colname => $d->{names}->[$_]
 			} } (0 .. $#{$d->{names}}) ]
 	};
-	write_tsv($column, 0, $out_file);
+	write_tsv($column, $out_file);
 }
 
 sub write_transpose
@@ -965,7 +972,7 @@ sub write_transpose
 				}
 			} df_get_names($d) ]
 	};
-	write_tsv($res, 0, $out_file);
+	write_tsv($res, $out_file);
 }
 
 sub write_tsv_rows
@@ -993,9 +1000,10 @@ sub do_cat
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $show_row_numbers, $out_file) = ('', 0, 0, $STDOUT);
 	my $opts = {
 		'-o' => \$out_file,
+		'-n' => sub { $show_row_numbers = 1; },
 		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_cat, $opts, [ \$in_file ]);
@@ -1006,7 +1014,7 @@ sub do_cat
 	}
 
 	my $d = load_tsv($in_file, $no_header);
-	write_tsv($d, 0, $out_file);
+	write_tsv($d, $out_file, { show_row_numbers => $show_row_numbers });
 	exit 0;
 }
 
@@ -1165,7 +1173,7 @@ sub do_select
 	my $d = load_tsv($in_file);
 	my %dict = map { $_ => 1 } df_get_names($d);
 	my @col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
-	write_tsv($d, $no_header, $out_file, "\t", \@col_index);
+	write_tsv($d, $out_file, { no_header => $no_header, columns => \@col_index });
 	exit 0;
 }
 
@@ -1225,7 +1233,7 @@ sub do_tsv_head
 	} else {
 		@{$d->{data}} = @{$d->{data}}[0 .. ($num - 1)];
 	}
-	write_tsv($d, 0);
+	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
@@ -1260,7 +1268,7 @@ sub do_tsv_tail
 	} else {
 		@{$d->{data}} = @{$d->{data}}[($max_num - $num) .. ($max_num - 1)];
 	}
-	write_tsv($d, 0);
+	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
@@ -1282,7 +1290,7 @@ sub do_tsv_filter
 		push @data, $item if parse_cond($cond, $item);
 	}
 	@{$d->{data}} = @data;
-	write_tsv($d, 0);
+	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
@@ -1316,7 +1324,7 @@ sub do_cleanup
 			}
 			$x;
 		} @{$d->{data}};
-	write_tsv($d, 0);
+	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
@@ -1340,7 +1348,7 @@ sub do_tsv_sort
 	}
 	my $d = load_tsv($in_file);
 	tsv_sort($d, $column_count);
-	write_tsv($d, 0);
+	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
@@ -1365,7 +1373,7 @@ sub do_tsv_merge
 	while (my $filename = shift @in_files) {
 		$d = merge_tsv($d, load_tsv($filename));
 	}
-	write_tsv($d, 0);
+	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
@@ -1383,7 +1391,7 @@ sub do_tsv_join
 	my $tsv1 = load_tsv($left_file);
 	my $tsv2 = load_tsv($right_file);
 	my $d = join_tsv($tsv1, $tsv2, $column);
-	write_tsv($d, 0);
+	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
@@ -1415,7 +1423,7 @@ sub do_tsv_summary
 		}
 		push @{$summary->{data}}, \%item;
 	}
-	write_tsv($summary, 0);
+	write_tsv($summary, $STDOUT);
 	exit 0;
 }
 
