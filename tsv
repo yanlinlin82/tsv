@@ -13,23 +13,23 @@ my $STDIN = '/dev/stdin';
 my $STDOUT = '/dev/stdout';
 
 my $dispatcher = {
-	"align"     => { proc => \&do_align,     desc => "align columns" },
-	"cat"       => { proc => \&do_cat,       desc => "show file content" },
-	"cleanup"   => { proc => \&do_cleanup,   desc => "remove empty rows or columns" },
-	"column"    => { proc => \&do_column,    desc => "list columns" },
-	"filter"    => { proc => \&do_tsv_filter,    desc => "filter by conditions" },
-	"head"      => { proc => \&do_tsv_head,      desc => "fetch head n rows" },
-	"join"      => { proc => \&do_tsv_join,      desc => "join two tables by key column(s)" },
-	"merge"     => { proc => \&do_tsv_merge,     desc => "merge multiple files" },
-	"select"    => { proc => \&do_tsv_select,    desc => "select columns" },
-	"sort"      => { proc => \&do_tsv_sort,      desc => "sort by column(s)" },
-	"subset"    => { proc => \&do_tsv_subset,    desc => "select rows (subset)" },
-	"summary"   => { proc => \&do_tsv_summary,   desc => "summary each column" },
-	"tail"      => { proc => \&do_tsv_tail,      desc => "fetch tail n rows" },
-	"transpose" => { proc => \&do_tsv_transpose, desc => "matrix transpose" },
-	"to-excel"  => { proc => \&do_tsv_to_excel,  desc => "write to Excel (.xlsx) file" },
-	"version"   => { proc => \&do_version,       desc => "show program version" },
-	"view"      => { proc => \&do_tsv_view,      desc => "view file content in pretty better format" },
+	"cat"       => \&do_cat,
+	"align"     => \&do_align,
+	"view"      => \&do_tsv_view,
+	"column"    => \&do_column,
+	"transpose" => \&do_tsv_transpose,
+	"select"    => \&do_tsv_select,
+	"subset"    => \&do_tsv_subset,
+	"head"      => \&do_tsv_head,
+	"tail"      => \&do_tsv_tail,
+	"filter"    => \&do_tsv_filter,
+	"cleanup"   => \&do_cleanup,
+	"sort"      => \&do_tsv_sort,
+	"merge"     => \&do_tsv_merge,
+	"join"      => \&do_tsv_join,
+	"summary"   => \&do_tsv_summary,
+	"to-excel"  => \&do_tsv_to_excel,
+	"version"   => \&do_version,
 };
 
 my $verbose = 0;
@@ -51,7 +51,7 @@ do_install() if $cmd eq 'install';
 do_test() if $cmd eq 'test';
 print_usage() if $cmd eq 'help';
 die "Error: Unknown command '$cmd'" unless exists $dispatcher->{$cmd};
-exit $dispatcher->{$cmd}->{proc}->($cmd, @ARGV);
+exit $dispatcher->{$cmd}->($cmd, @ARGV);
 
 ############################################################
 # global helper functions
@@ -132,18 +132,35 @@ License: MIT 2019-2020
 
 Usage: ' . $APPNAME . ' <command> [options]
 
-Available commands:
+Commands:
+  - Displaying
+      cat        show file content
+      align      align columns
+      view       view file content in pretty better format
+      column     list columns
+      transpose  matrix transpose
+
+  - Selecting
+      select     select columns
+      subset     select rows (subset)
+      head       fetch head n rows
+      tail       fetch tail n rows
+      filter     filter by conditions
+      cleanup    remove empty rows or columns
+
+  - Manipulating
+      sort       sort by column(s)
+      merge      merge multiple files
+      join       join two tables by key column(s)
+      summary    summary each column
+
+  - Writing
+      to-excel   write to Excel (.xlsx) file
+
+  - Others
+      version    show program version
+
 ';
-	my $max_cmd_width = 0;
-	for my $cmd (sort keys %{$dispatcher}) {
-		if ($max_cmd_width < get_text_width($cmd)) {
-			$max_cmd_width = get_text_width($cmd);
-		}
-	}
-	for my $cmd (sort keys %{$dispatcher}) {
-		print "  " . $cmd . (" " x ($max_cmd_width - get_text_width($cmd))) . "  " . $dispatcher->{$cmd}->{desc}, "\n";
-	}
-	print "\n";
 	exit 1;
 }
 
