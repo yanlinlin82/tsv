@@ -1263,10 +1263,10 @@ sub do_head
 	my @row_index = ();
 	if ($row_count > 0) {
 		$row_count = $n if $row_count > $n;
-		push @row_index, { start => 1, end => $row_count };
+		push @row_index, { start => 1, end => $row_count } if $row_count < $n;
 	} elsif ($row_count < 0) {
 		$row_count = -$n if $row_count < -$n;
-		push @row_index, { start => 1, end => $n + $row_count };
+		push @row_index, { start => 1, end => $n + $row_count } if $row_count > -$n;
 	}
 	write_tsv_rows($d, $no_header, $out_file, \@row_index);
 	exit 0;
@@ -1295,10 +1295,10 @@ sub do_tail
 	my @row_index = ();
 	if ($row_count > 0) {
 		$row_count = $n if $row_count > $n;
-		push @row_index, { start => $n - $row_count + 1, end => $n };
+		push @row_index, { start => $n - $row_count + 1, end => $n } if $row_count < $n;
 	} elsif ($row_count < 0) {
 		$row_count = -$n if $row_count < -$n;
-		push @row_index, { start => 1 - $row_count, end => $n };
+		push @row_index, { start => 1 - $row_count, end => $n } if $row_count > -$n;
 	}
 	write_tsv_rows($d, $no_header, $out_file, \@row_index);
 	exit 0;
