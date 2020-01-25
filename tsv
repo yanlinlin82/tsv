@@ -1760,10 +1760,15 @@ sub do_install
 		}
 	}
 	print STDERR "All symbolic links are created.\n";
-	eval("use Excel::Writer::XLSX");
-	print STDERR "Warning: Perl module 'Excel::Writer::XLSX' is required for writing Excel files\n" if $@;
-	eval("use Spreadsheet::XLSX");
-	print STDERR "Warning: Perl module 'Spreadsheet::XLSX' is required for reading Excel files\n" if $@;
+	my @libs = (
+		{ name => 'Encode',              required_for => 'writing Excel files' },
+		{ name => 'Excel::Writer::XLSX', required_for => 'writing Excel files' },
+		{ name => 'Spreadsheet::XLSX',   required_for => 'reading Excel files' },
+	);
+	for my $item (@libs) {
+		eval("use $item->{name}");
+		print STDERR "Warning: Perl module '$item->{name}' is required for $item->{required_for}\n" if $@;
+	}
 	exit 0;
 }
 
