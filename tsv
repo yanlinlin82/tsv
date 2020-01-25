@@ -22,7 +22,7 @@ my $dispatcher = {
 	"select-rows" => \&do_select_rows,
 	"head"        => \&do_head,
 	"tail"        => \&do_tail,
-	"filter"      => \&do_tsv_filter,
+	"filter"      => \&do_filter,
 	"cleanup"     => \&do_cleanup,
 	"sort"        => \&do_tsv_sort,
 	"merge"       => \&do_tsv_merge,
@@ -301,7 +301,7 @@ Options:
 
 Note:
   1. if '-n <INT>' is leading with '-', it will print all but the last <INT> lines.
-     e.g.: $cmd_prefix in.txt -n-10  # remove last 10 lines.
+     e.g.:  $cmd_prefix in.txt -n-10  # remove last 10 lines.
 
 ";
 	exit 1;
@@ -320,7 +320,26 @@ Options:
 
 Note:
   1. if '-n <INT>' is leading with '-', it will print all but the first <INT> lines.
-     e.g.: $cmd_prefix in.txt -n-10  # remove first 10 lines.
+     e.g.:  $cmd_prefix in.txt -n-10  # remove first 10 lines.
+
+";
+	exit 1;
+}
+
+sub print_usage_filter
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt> <condition>...
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   --no-header   Input file does not have header line
+
+Notes:
+  1. <condition> can be logical expression.
+     e.g.:  $cmd_prefix$cmd in.txt 'age>=18'
+            $cmd_prefix$cmd in.txt 'age>=18' 'sex==\"male\"'
 
 ";
 	exit 1;
@@ -467,21 +486,64 @@ sub is_numeric
 	return do { no warnings; $val eq ($val + 0) };
 }
 
-sub parse_cond
+sub parse_cond_obj
 {
-	my ($cond, $item) = @_;
-	#print "parse_cond('$cond', { " . join(", ", map { "$_ => $item->{$_}" } sort(keys(%{$item}))) . " })\n";
-	for my $name (keys %{$item}) {
-		if (is_numeric($item->{$name})) {
-			$cond =~ s/\b$name\b/$item->{$name}/g;
+	my ($s, $names) = @_;
+	$s =~ s/(^\s*|\s*$)//g;
+	if ($s =~ /^[0-9]/) {
+		return (eval($s), 'number');
+	} elsif ($s =~ /^["']/) {
+		return (eval($s), 'string');
+	} else {
+		die "Error: No column '$s' found" if not exists $names->{$s};
+		return ($s, 'var');
+	}
+}
+
+sub build_filter
+{
+	my ($conditions, $names) = @_;
+	my @filter = ();
+	for my $cond (@{$conditions}) {
+		die "Error: Invalid condition '$cond'" if $cond !~ /^(.+)(==|!=|<=?|>=?|=~|!~)(.+)$/;
+		my ($a, $op, $b) = ($1, $2, $3);
+		my ($a_type, $b_type);
+		($a, $a_type) = parse_cond_obj($a, $names);
+		($b, $b_type) = parse_cond_obj($b, $names);
+		die "Error: No column is specified in condition '$cond'" if $a_type ne 'var' and $b_type ne 'var';
+		push @filter, {
+			a => { val => $a, type => $a_type },
+			op => $op,
+			b => { val => $b, type => $b_type }
+		};
+	}
+	return \@filter;
+}
+
+sub check_filter_ok
+{
+	my ($item, $filter) = @_;
+	for my $cond (@{$filter}) {
+		my $op = $cond->{op};
+		my ($a, $a_type) = ($cond->{a}->{val}, $cond->{a}->{type});
+		$a = $item->{$a} if $a_type eq 'var';
+		my ($b, $b_type) = ($cond->{b}->{val}, $cond->{b}->{type});
+		$b = $item->{$b} if $b_type eq 'var';
+		if ($op eq '=~') {
+			return 0 unless ($a =~ $b);
+		} elsif ($op eq '!~') {
+			return 0 unless ($a !~ $b);
 		} else {
-			$cond =~ s/\b$name\b/"$item->{$name}"/g;
+			my $n;
+			if ($a_type eq 'string' or $b_type eq 'string') {
+				$n = ($a cmp $b);
+			} else {
+				$n = ($a <=> $b);
+			}
+			return 0 unless eval($n . $cond->{op} . '0');
 		}
 	}
-	#print " cond = '$cond'\n";
-	my $val = do { no warnings; eval($cond) };
-	#print " val = '$val'\n";
-	return $val;
+	return 1;
 }
 
 sub get_unique_name
@@ -777,7 +839,9 @@ sub write_tsv
 	print $fh join($sep, @names), "\n" unless $no_header;
 	my $row_number = 0;
 	while (my $item = tsv_fetch_row($d)) {
-		print $fh ++$row_number, "\t" if $show_row_numbers;
+		++$row_number;
+		next if exists $opts->{filter} and not check_filter_ok($item, $opts->{filter});
+		print $fh $row_number, "\t" if $show_row_numbers;
 		print $fh join($sep, map { $item->{$_} // '' } (@names)), "\n";
 	}
 	close $fh;
@@ -1305,25 +1369,28 @@ sub do_tail
 	exit 0;
 }
 
-sub do_tsv_filter
+sub do_filter
 {
-	my ($in_file, $cond);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $cond) = @ARGV;
-	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $cond) = ($STDIN, $ARGV[0]);
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt> <condition>\n";
-		exit 1;
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	my @conditions = ();
+	parse_args($cmd, \@args, \&print_usage_filter, $opts, [ \$in_file ], \@conditions);
+
+	if ($in_file ne '' and not -e $in_file and not -t STDIN) {
+		unshift @conditions, $in_file;
+		$in_file = $STDIN;
 	}
-	my $d = load_tsv($in_file);
-	my $row_count = scalar(@{$d->{data}});
-	my @data = ();
-	for my $item (@{$d->{data}}) {
-		push @data, $item if parse_cond($cond, $item);
-	}
-	@{$d->{data}} = @data;
-	write_tsv($d, $STDOUT);
+	print_usage_filter($cmd, $opts) if $in_file eq '' or not @conditions;
+
+	my $d = load_tsv($in_file, $no_header);
+	my %names = map { $_ => 1 } @{$d->{names}};
+	my $filter = build_filter(\@conditions, \%names);
+	write_tsv($d, $out_file, { filter => $filter });
 	exit 0;
 }
 
