@@ -20,7 +20,7 @@ my $dispatcher = {
 	"transpose"   => \&do_transpose,
 	"select"      => \&do_select,
 	"select-rows" => \&do_select_rows,
-	"head"        => \&do_tsv_head,
+	"head"        => \&do_head,
 	"tail"        => \&do_tsv_tail,
 	"filter"      => \&do_tsv_filter,
 	"cleanup"     => \&do_cleanup,
@@ -282,6 +282,25 @@ Notes:
   1. <rows> can be either numbers or names, separated by ',' or space.
      e.g.:  $cmd_prefix$cmd in.txt 1,3-5 10
   2. row numbers are 1-based integers.
+
+";
+	exit 1;
+}
+
+sub print_usage_head
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -n <INT>      Show first n rows, default: " . fetch_arg($opts, '-n') . "
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   --no-header   Input file does not have header line
+
+Note:
+  1. if '-n <INT>' is leading with '-', it will print all but the last <INT> lines.
+     e.g.: $cmd_prefix in.txt -n-10  # remove last 10 lines.
 
 ";
 	exit 1;
@@ -993,6 +1012,52 @@ sub write_tsv_rows
 	close $fh;
 }
 
+sub expand_row_index
+{
+	my ($x, $n) = @_;
+	my @s = split(',', $x);
+	if (scalar(@s) > 1) {
+		return map { expand_row_index($_, $n) } @s;
+	}
+	if ($x =~ /^[0-9]+$/) {
+		return ( { start => $x, end => $x } ) if $x >= 1 and $x <= $n;
+		die "Error: Invalid row number '$x'! It should be between 1 and $n";
+	} elsif ($x =~ /^(.*)(\-|:|\.\.)(.*)$/) {
+		my ($a, $b) = ($1, $3);
+		$a = 1 if $a eq '';
+		$b = $n if $b eq '';
+		return ( { start => $a, end => $b } ) if $a >= 1 and $a <= $n and $b >= 1 and $b <= $n;
+		die "Error: Invalid row range '$x'! It should be between 1 and $n";
+	} else {
+		die "Error: Invalid row number '$x'!";
+	}
+}
+
+sub expand_column_index
+{
+	my ($x, $dict, $columns, $maybe_range) = @_;
+	my $n = scalar(@{$columns});
+	return $dict->{$x} if exists $dict->{$x};
+	my @s = split(',', $x);
+	if (scalar(@s) > 1) {
+		return map { expand_column_index($_, $dict, $columns, 1) } (@s);
+	}
+	if ($maybe_range and ($x =~ /^(.*)(\-|:|\.\.)(.*)$/)) {
+		my ($a, $b) = ($1, $3);
+		$a = 1 if $a eq '';
+		$b = $n if $b eq '';
+		$a = expand_column_index($a, $dict, $columns, 0);
+		$b = expand_column_index($b, $dict, $columns, 0);
+		if ($a <= $b) { return ($a .. $b); } else { return reverse ($b .. $a); }
+	}
+	if ($x =~ /^[0-9]+$/) {
+		return $x if $x >= 1 and $x <= $n;
+		die "Error: Invalid column number '$x'! It should be between 1 and $n";
+	} else {
+		die "Error: Invalid column name '$x'! Available colum names: ('" . join("', '", @{$columns}) . "')"
+	}
+}
+
 ############################################################
 # commands
 
@@ -1106,52 +1171,6 @@ sub do_transpose
 	exit 0;
 }
 
-sub expand_row_index
-{
-	my ($x, $n) = @_;
-	my @s = split(',', $x);
-	if (scalar(@s) > 1) {
-		return map { expand_row_index($_, $n) } @s;
-	}
-	if ($x =~ /^[0-9]+$/) {
-		return ( { start => $x, end => $x } ) if $x >= 1 and $x <= $n;
-		die "Error: Invalid row number '$x'! It should be between 1 and $n";
-	} elsif ($x =~ /^(.*)(\-|:|\.\.)(.*)$/) {
-		my ($a, $b) = ($1, $3);
-		$a = 1 if $a eq '';
-		$b = $n if $b eq '';
-		return ( { start => $a, end => $b } ) if $a >= 1 and $a <= $n and $b >= 1 and $b <= $n;
-		die "Error: Invalid row range '$x'! It should be between 1 and $n";
-	} else {
-		die "Error: Invalid row number '$x'!";
-	}
-}
-
-sub expand_column_index
-{
-	my ($x, $dict, $columns, $maybe_range) = @_;
-	my $n = scalar(@{$columns});
-	return $dict->{$x} if exists $dict->{$x};
-	my @s = split(',', $x);
-	if (scalar(@s) > 1) {
-		return map { expand_column_index($_, $dict, $columns, 1) } (@s);
-	}
-	if ($maybe_range and ($x =~ /^(.*)(\-|:|\.\.)(.*)$/)) {
-		my ($a, $b) = ($1, $3);
-		$a = 1 if $a eq '';
-		$b = $n if $b eq '';
-		$a = expand_column_index($a, $dict, $columns, 0);
-		$b = expand_column_index($b, $dict, $columns, 0);
-		if ($a <= $b) { return ($a .. $b); } else { return reverse ($b .. $a); }
-	}
-	if ($x =~ /^[0-9]+$/) {
-		return $x if $x >= 1 and $x <= $n;
-		die "Error: Invalid column number '$x'! It should be between 1 and $n";
-	} else {
-		die "Error: Invalid column name '$x'! Available colum names: ('" . join("', '", @{$columns}) . "')"
-	}
-}
-
 sub do_select
 {
 	my ($cmd, @args) = @_;
@@ -1170,7 +1189,7 @@ sub do_select
 	}
 	print_usage_select($cmd, $opts) if $in_file eq '' or not @columns;
 
-	my $d = load_tsv($in_file);
+	my $d = load_tsv($in_file, $no_header);
 	my %dict = map { $_ => 1 } df_get_names($d);
 	my @col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
 	write_tsv($d, $out_file, { no_header => $no_header, columns => \@col_index });
@@ -1195,45 +1214,42 @@ sub do_select_rows
 	}
 	print_usage_select_rows($cmd, $opts) if $in_file eq '' or not @rows;
 
-	my $d = load_tsv($in_file);
+	my $d = load_tsv($in_file, $no_header);
 	my $n = scalar(@{$d->{data}});
 	my @row_index = map { expand_row_index($_, $n) } (@rows);
 	write_tsv_rows($d, $no_header, $out_file, \@row_index);
 	exit 0;
 }
 
-sub do_tsv_head
+sub do_head
 {
-	my ($in_file, $num, $sign);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $num) = @ARGV;
-	} elsif (scalar(@ARGV) == 1) {
-		if (not -t STDIN) {
-			($in_file, $num) = ($STDIN, $ARGV[0]);
-		} else {
-			($in_file, $num) = ($ARGV[0], 10);
-		}
-	} else {
-		if (-t STDIN) {
-			print "Usage: $cmd_prefix$cmd <in.txt> [NUM]\n";
-			print "Note:\n";
-			print "  1. 'NUM' should be an integer number (defaults to 10), print the first NUM lines\n";
-			print "  2. if 'NUM' is leading with '-', print all but the last NUM lines\n";
-			exit 1;
-		}
-		($in_file, $num) = ($STDIN, 10);
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $row_count, $no_header, $out_file) = ('', 10, 0, $STDOUT);
+	my $opts = {
+		'-n' => \$row_count,
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_head, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_head($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
 	}
-	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
-	($sign, $num) = ($1, $2);
-	my $d = load_tsv($in_file);
-	my $max_num = scalar @{$d->{data}};
-	$num = $max_num if $num > $max_num;
-	if ($sign eq "-") {
-		@{$d->{data}} = @{$d->{data}}[0 .. ($max_num - $num - 1)];
-	} else {
-		@{$d->{data}} = @{$d->{data}}[0 .. ($num - 1)];
+
+	my $d = load_tsv($in_file, $no_header);
+	die "Error: Invalid value '$row_count' for '-n'" if $row_count !~ /^[-+]?[0-9]+$/;
+	my $n = scalar(@{$d->{data}});
+	my @row_index = ();
+	if ($row_count > 0) {
+		$row_count = $n if $row_count > $n;
+		push @row_index, { start => 1, end => $row_count };
+	} elsif ($row_count < 0) {
+		$row_count = -$n if $row_count < -$n;
+		push @row_index, { start => 1, end => $n + $row_count };
 	}
-	write_tsv($d, $STDOUT);
+	write_tsv_rows($d, $no_header, $out_file, \@row_index);
 	exit 0;
 }
 
