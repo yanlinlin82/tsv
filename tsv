@@ -25,7 +25,7 @@ my $dispatcher = {
 	"filter"      => \&do_filter,
 	"cleanup"     => \&do_cleanup,
 	"sort"        => \&do_sort,
-	"merge"       => \&do_tsv_merge,
+	"merge"       => \&do_merge,
 	"join"        => \&do_tsv_join,
 	"summary"     => \&do_tsv_summary,
 	"to-csv"      => \&do_to_csv,
@@ -408,6 +408,23 @@ Notes:
      to specify treating column value as number when sorting.
      e.g.:  $cmd_prefix$cmd in.txt 2+n
             $cmd_prefix$cmd in.txt age+n
+
+";
+	exit 1;
+}
+
+sub print_usage_merge
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in-1.txt> <in-2.txt>...
+       $cmd_prefix$cmd [options] -f <file-list.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   -f <FILE>     Input file list, each line contains one file path
+   --no-header   Input file does not have header line
 
 ";
 	exit 1;
@@ -1514,9 +1531,9 @@ sub do_cleanup
 
 	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
-		'--no-header' => sub { $no_header = 1; },
+		'-o' => \$out_file,
 		'-s' => \$sep,
-		'-o' => \$out_file
+		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_cleanup, $opts, [ \$in_file ]);
 
@@ -1545,9 +1562,9 @@ sub do_sort
 
 	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
-		'--no-header' => sub { $no_header = 1; },
+		'-o' => \$out_file,
 		'-s' => \$sep,
-		'-o' => \$out_file
+		'--no-header' => sub { $no_header = 1; },
 	};
 	my @columns = ();
 	parse_args($cmd, \@args, \&print_usage_sort, $opts, [ \$in_file ], \@columns);
@@ -1563,26 +1580,40 @@ sub do_sort
 	exit 0;
 }
 
-sub do_tsv_merge
+sub do_merge
 {
-	if (scalar @ARGV < 2) {
-		print "Usage: $cmd_prefix$cmd <in_1.txt> <in_2.txt>...\n";
-		print "       $cmd_prefix$cmd -f <file-list.txt>\n";
-		exit 1;
-	}
-	my @in_files;
-	if ($ARGV[0] ne "-f") {
-		@in_files = @ARGV;
-	} else {
-		shift @ARGV;
-		die "Error: Missing parameter after '-f'" unless @ARGV;
-		open my $fh, "<", ($ARGV[0] eq "-" ? $STDIN : $ARGV[0]) or die "Error: Can not open file '$ARGV[0]'";
-		@in_files = map { chomp; $_ } <$fh>;
+	my ($cmd, @args) = @_;
+
+	my ($no_header, $out_file, $sep, $file_list) = (0, $STDOUT, "\t", '');
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'-f' => \$file_list,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	my @in_files = ();
+	parse_args($cmd, \@args, \&print_usage_sort, $opts, [], \@in_files);
+
+	if ($file_list ne '') {
+		$file_list = $STDIN if $file_list eq '-';
+		open my $fh, "<", $file_list or die "Error: Can not open file '$ARGV[0]'";
+		while (my $line = <$fh>) {
+			chomp $line;
+			$line =~ s/(^\s*|\s*$)//g;
+			next if $line eq '' or $line =~ /^#/;
+			die "Error: File '$line' does not exist" unless -e $line;
+			push @in_files, $line;
+		}
 		close $fh;
 	}
-	my $d = load_tsv(shift @in_files);
-	while (my $filename = shift @in_files) {
-		$d = merge_tsv($d, load_tsv($filename));
+	if (scalar(@in_files) == 1 and not -t STDIN and $file_list ne $STDIN) {
+		unshift @in_files, $STDIN;
+	}
+	print_usage_sort($cmd, $opts) if scalar(@in_files) < 2;
+
+	my $d = load_tsv($in_files[0], $no_header, $sep);
+	for my $i (1 .. $#in_files) {
+		$d = merge_tsv($d, load_tsv($in_files[$i]));
 	}
 	write_tsv($d, $STDOUT);
 	exit 0;
