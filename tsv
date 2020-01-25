@@ -229,10 +229,12 @@ Options:
 
 sub print_usage_transpose
 {
+	my ($cmd, $opts) = @_;
 	print "
 Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
    --no-header   Input file does not have header line
 
 ";
@@ -931,6 +933,22 @@ sub write_column
 	write_tsv($column, 0, $out_file);
 }
 
+sub write_transpose
+{
+	my ($d, $out_file) = @_;
+	my $res = {
+		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
+		data => [ map {
+				my $name = $_;
+				{
+					"colname" => $name,
+					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
+				}
+			} df_get_names($d) ]
+	};
+	write_tsv($res, 0, $out_file);
+}
+
 ############################################################
 # commands
 
@@ -949,6 +967,7 @@ sub do_cat
 		print_usage_cat($cmd, $opts) if -t STDIN;
 		$in_file = $STDIN;
 	}
+
 	my $d = load_tsv($in_file, $no_header);
 	write_tsv($d, 0, $out_file);
 	exit 0;
@@ -973,6 +992,7 @@ sub do_align
 		print_usage_align($cmd, $opts) if -t STDIN;
 		$in_file = $STDIN;
 	}
+
 	my $d = load_tsv($in_file, $no_header);
 	write_align($d, $no_header, $out_file, $max_width, $max_check);
 	exit 0;
@@ -984,8 +1004,8 @@ sub do_view
 
 	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
 	my $opts = {
+		'-o' => \$out_file,
 		'--no-header' => sub { $no_header = 1; },
-		'-o' => \$out_file
 	};
 	parse_args($cmd, \@args, \&print_usage_view, $opts, [ \$in_file ]);
 
@@ -993,6 +1013,7 @@ sub do_view
 		print_usage_cat($cmd, $opts) if -t STDIN;
 		$in_file = $STDIN;
 	}
+
 	my $d = load_tsv($in_file, $no_header);
 	write_view($d, $out_file);
 	exit 0;
@@ -1004,8 +1025,8 @@ sub do_column
 
 	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
 	my $opts = {
+		'-o' => \$out_file,
 		'--no-header' => sub { $no_header = 1; },
-		'-o' => \$out_file
 	};
 	parse_args($cmd, \@args, \&print_usage_column, $opts, [ \$in_file ]);
 
@@ -1013,6 +1034,7 @@ sub do_column
 		print_usage_column($cmd, $opts) if -t STDIN;
 		$in_file = $STDIN;
 	}
+
 	my $d = load_tsv($in_file, $no_header);
 	write_column($d, $out_file);
 	exit 0;
@@ -1020,42 +1042,22 @@ sub do_column
 
 sub do_transpose
 {
-	my $in_file = '';
-	my $no_header = 0;
-	while (my $arg = shift @ARGV) {
-		if ($arg =~ /^-/) {
-			if ($arg eq '-h' or $arg eq '--help') {
-				print_usage_transpose();
-			} elsif ($arg eq '--no-header') {
-				$no_header = 1;
-			} else {
-				die "Error: Unknown option '$arg' for '$cmd_prefix$cmd'";
-			}
-		} elsif ($in_file eq '') {
-			$in_file = $arg;
-		} else {
-			die "Error: Unexpected parameter '$arg' for '$cmd_prefix$cmd'";
-		}
-	}
-	if ($in_file eq '') {
-		if (-t STDIN) {
-			print_usage_align();
-		} else {
-			$in_file = $STDIN;
-		}
-	}
-	my $d = load_tsv($in_file, $no_header);
-	my $res = {
-		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
-		data => [ map {
-				my $name = $_;
-				{
-					"colname" => $name,
-					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
-				}
-			} df_get_names($d) ]
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
 	};
-	write_tsv($res, 0);
+	parse_args($cmd, \@args, \&print_usage_transpose, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_transpose($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+
+	my $d = load_tsv($in_file, $no_header);
+	write_transpose($d, $out_file);
 	exit 0;
 }
 
