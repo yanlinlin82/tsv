@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 use warnings;
-use Data::Dumper;
+eval("use Data::Dumper");
 
 ############################################################
 # global variables
@@ -161,6 +161,7 @@ Commands:
       summary       summary each column
 
   - Writing
+      to-csv        write to CSV file
       to-excel      write to Excel (.xlsx) file
 
   - Others
@@ -178,6 +179,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    -n            Show row numbers
    --no-header   Input file does not have header line
 
@@ -193,6 +195,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>           Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>           Separate character, default: <TAB>
    --no-header         Input file does not have header line
    --max-width <int>   Maximum column width for each column, default: " . fetch_arg($opts, '--max-width') . "
    --max-check <int>   Maximum checking lines for calculate column width, default: " . fetch_arg($opts, '--max-check') . "
@@ -209,6 +212,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 ";
@@ -223,6 +227,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 ";
@@ -237,6 +242,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 ";
@@ -251,6 +257,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt> <columns>...
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 Notes:
@@ -277,6 +284,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt> <rows>...
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 Notes:
@@ -297,6 +305,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 Options:
    -n <INT>      Show first n rows, default: " . fetch_arg($opts, '-n') . "
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 Note:
@@ -316,6 +325,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 Options:
    -n <INT>      Show last n rows, default: " . fetch_arg($opts, '-n') . "
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 Note:
@@ -334,6 +344,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt> <condition>...
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 Notes:
@@ -353,6 +364,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 ";
@@ -367,6 +379,7 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
 
 ";
@@ -788,36 +801,35 @@ sub is_valid_xslx_ref
 
 sub load_tsv
 {
-	my ($filename, $no_header) = @_;
+	my ($filename, $no_header, $sep) = @_;
 	my @names = ();
 	my @data = ();
-	if (defined($filename) and (($filename eq "-" and not -t STDIN) or
-			-e $filename or is_valid_xslx_ref($filename))) {
-		my ($mod, $con, $sep) = ("<", $filename, "\t");
-
+	die "Error: Input file '$filename' does not exist" unless -e $filename or is_valid_xslx_ref($filename);
+	my ($mod, $con) = ("<", $filename);
+	if (not defined $sep) {
+		$sep = "\t";
 		$sep = "," if $filename =~ /\.csv(|\.gz|\.bz2)$/;
-
-		if (is_valid_xslx_ref($filename)) { return load_xlsx($filename, $no_header); }
-		if ($filename =~ /\.bed(|\.gz|\.bz2)$/) { return load_bed($filename); }
-		if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
-		my $fh = open_file($filename);
-		my %hash = ();
-		while (my $line = <$fh>) {
-			chomp $line;
-			if ($fh->input_line_number == 1 and not $no_header) {
-				@names = split($sep, $line, -1);
-				@names = prepare_colnames(\@names, \%hash);
-			} else {
-				my @values = split($sep, $line, -1);
-				if ($#names < $#values) {
-					push @names, map { get_unique_name('', \%hash) } (($#names + 1) .. $#values)
-				}
-				my %item = map { $names[$_] => ($values[$_] // '') } (0 .. $#names);
-				push @data, \%item;
-			}
-		}
-		close_file($fh);
 	}
+	if (is_valid_xslx_ref($filename)) { return load_xlsx($filename, $no_header); }
+	if ($filename =~ /\.bed(|\.gz|\.bz2)$/) { return load_bed($filename); }
+	if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
+	my $fh = open_file($filename);
+	my %hash = ();
+	while (my $line = <$fh>) {
+		chomp $line;
+		if ($fh->input_line_number == 1 and not $no_header) {
+			@names = split($sep, $line, -1);
+			@names = prepare_colnames(\@names, \%hash);
+		} else {
+			my @values = split($sep, $line, -1);
+			if ($#names < $#values) {
+				push @names, map { get_unique_name('', \%hash) } (($#names + 1) .. $#values)
+			}
+			my %item = map { $names[$_] => ($values[$_] // '') } (0 .. $#names);
+			push @data, \%item;
+		}
+	}
+	close_file($fh);
 	return { names => \@names, data => \@data };
 }
 
@@ -1151,9 +1163,10 @@ sub do_cat
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $show_row_numbers, $out_file) = ('', 0, 0, $STDOUT);
+	my ($in_file, $no_header, $show_row_numbers, $out_file, $sep) = ('', 0, 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'-n' => sub { $show_row_numbers = 1; },
 		'--no-header' => sub { $no_header = 1; },
 	};
@@ -1164,7 +1177,7 @@ sub do_cat
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	write_tsv($d, $out_file, { show_row_numbers => $show_row_numbers });
 	exit 0;
 }
@@ -1173,11 +1186,12 @@ sub do_align
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $max_width = 100;
 	my $max_check = 1000;
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 		'--max-width' => \$max_width,
 		'--max-check' => \$max_check,
@@ -1189,7 +1203,7 @@ sub do_align
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	write_align($d, $no_header, $out_file, $max_width, $max_check);
 	exit 0;
 }
@@ -1198,19 +1212,20 @@ sub do_view
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_view, $opts, [ \$in_file ]);
 
 	if ($in_file eq '') {
-		print_usage_cat($cmd, $opts) if -t STDIN;
+		print_usage_view($cmd, $opts) if -t STDIN;
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	write_view($d, $out_file);
 	exit 0;
 }
@@ -1219,9 +1234,10 @@ sub do_column
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_column, $opts, [ \$in_file ]);
@@ -1231,7 +1247,7 @@ sub do_column
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	write_column($d, $out_file);
 	exit 0;
 }
@@ -1240,9 +1256,10 @@ sub do_transpose
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_transpose, $opts, [ \$in_file ]);
@@ -1252,7 +1269,7 @@ sub do_transpose
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	write_transpose($d, $out_file);
 	exit 0;
 }
@@ -1261,9 +1278,10 @@ sub do_select
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	my @columns = ();
@@ -1275,7 +1293,7 @@ sub do_select
 	}
 	print_usage_select($cmd, $opts) if $in_file eq '' or not @columns;
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	my %dict = map { $_ => 1 } @{$d->{names}};
 	my @col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
 	write_tsv($d, $out_file, { no_header => $no_header, col_index => \@col_index });
@@ -1286,9 +1304,10 @@ sub do_select_rows
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	my @rows = ();
@@ -1300,7 +1319,7 @@ sub do_select_rows
 	}
 	print_usage_select_rows($cmd, $opts) if $in_file eq '' or not @rows;
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	my $n = scalar(@{$d->{data}});
 	my @row_index = map { expand_row_index($_, $n) } (@rows);
 	write_tsv($d, $out_file, { no_header => $no_header, row_index => \@row_index });
@@ -1311,10 +1330,11 @@ sub do_head
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $row_count, $no_header, $out_file) = ('', 10, 0, $STDOUT);
+	my ($in_file, $row_count, $no_header, $out_file, $sep) = ('', 10, 0, $STDOUT, "\t");
 	my $opts = {
 		'-n' => \$row_count,
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_head, $opts, [ \$in_file ]);
@@ -1324,13 +1344,13 @@ sub do_head
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	die "Error: Invalid value '$row_count' for '-n'" if $row_count !~ /^[-+]?[0-9]+$/;
 	my $n = scalar(@{$d->{data}});
 	my @row_index = ();
 	if ($row_count > 0) {
 		$row_count = $n if $row_count > $n;
-		push @row_index, { start => 1, end => $row_count } if $row_count < $n;
+		push @row_index, { start => 1, end => $row_count };
 	} elsif ($row_count < 0) {
 		$row_count = -$n if $row_count < -$n;
 		push @row_index, { start => 1, end => $n + $row_count } if $row_count > -$n;
@@ -1343,10 +1363,11 @@ sub do_tail
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $row_count, $no_header, $out_file) = ('', 10, 0, $STDOUT);
+	my ($in_file, $row_count, $no_header, $out_file, $sep) = ('', 10, 0, $STDOUT, "\t");
 	my $opts = {
 		'-n' => \$row_count,
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_head, $opts, [ \$in_file ]);
@@ -1356,13 +1377,13 @@ sub do_tail
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	die "Error: Invalid value '$row_count' for '-n'" if $row_count !~ /^[-+]?[0-9]+$/;
 	my $n = scalar(@{$d->{data}});
 	my @row_index = ();
 	if ($row_count > 0) {
 		$row_count = $n if $row_count > $n;
-		push @row_index, { start => $n - $row_count + 1, end => $n } if $row_count < $n;
+		push @row_index, { start => $n - $row_count + 1, end => $n };
 	} elsif ($row_count < 0) {
 		$row_count = -$n if $row_count < -$n;
 		push @row_index, { start => 1 - $row_count, end => $n } if $row_count > -$n;
@@ -1375,9 +1396,10 @@ sub do_filter
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	my @conditions = ();
@@ -1389,7 +1411,7 @@ sub do_filter
 	}
 	print_usage_filter($cmd, $opts) if $in_file eq '' or not @conditions;
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	my %names = map { $_ => 1 } @{$d->{names}};
 	my $filter = build_filter(\@conditions, \%names);
 	write_tsv($d, $out_file, { filter => $filter });
@@ -1400,9 +1422,10 @@ sub do_cleanup
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'--no-header' => sub { $no_header = 1; },
+		'-s' => \$sep,
 		'-o' => \$out_file
 	};
 	parse_args($cmd, \@args, \&print_usage_cleanup, $opts, [ \$in_file ]);
@@ -1412,7 +1435,7 @@ sub do_cleanup
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	my @col_index = ();
 	for my $i (0 .. $#{$d->{names}}) {
 		my $name = $d->{names}->[$i];
@@ -1529,9 +1552,10 @@ sub do_to_csv
 {
 	my ($cmd, @args) = @_;
 
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
 	my $opts = {
 		'-o' => \$out_file,
+		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
 	parse_args($cmd, \@args, \&print_usage_to_csv, $opts, [ \$in_file ]);
@@ -1541,7 +1565,7 @@ sub do_to_csv
 		$in_file = $STDIN;
 	}
 
-	my $d = load_tsv($in_file, $no_header);
+	my $d = load_tsv($in_file, $no_header, $sep);
 	write_tsv($d, $out_file, { sep => ',' });
 	exit 0;
 }
