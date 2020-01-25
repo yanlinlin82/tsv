@@ -7,7 +7,7 @@ use Data::Dumper;
 # global variables
 
 my $APPNAME = 'tsv';
-my $VERSION = "0.1.200125-dev";
+my $VERSION = "0.1.200126-dev";
 
 my $STDIN = '/dev/stdin';
 my $STDOUT = '/dev/stdout';
@@ -342,20 +342,6 @@ Options:
 ############################################################
 # data frame manipulating
 
-sub df_get_names { my $d = shift; return @{$d->{names}}; }
-
-sub tsv_get_column_count
-{
-	my $d = shift @_;
-	return scalar(df_get_names($d));
-}
-
-sub tsv_get_names
-{
-	my $d = shift @_;
-	return $d->{names};
-}
-
 sub tsv_fetch_row
 {
 	my $d = shift @_;
@@ -369,7 +355,7 @@ sub tsv_fetch_row
 sub tsv_sort
 {
 	my ($d, $column_count) = @_;
-	my $max_column_count = tsv_get_column_count($d);
+	my $max_column_count = scalar(@{$d->{data}});
 	$column_count = 1 if $column_count < 1;
 	$column_count = $max_column_count if $column_count > $max_column_count;
 	my $column = $d->{names}->[$column_count - 1];
@@ -958,7 +944,7 @@ sub write_view
 	my ($d, $out_file) = @_;
 	open my $ofh, '>', $out_file or die "Error: Can not create file '$out_file'";
 	my $max_name_width = length('column');
-	my $names = tsv_get_names($d);
+	my $names = $d->{names};
 	my $id_width = get_text_width(scalar(@{$names}) - 1);
 	my $max_id_width = ($id_width >= length('id') ? $id_width : length('id'));
 	for my $name (@{$names}) {
@@ -1008,7 +994,7 @@ sub write_transpose
 					"colname" => $name,
 					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
 				}
-			} df_get_names($d) ]
+			} @{$d->{names}} ]
 	};
 	write_tsv($res, $out_file);
 }
@@ -1209,7 +1195,7 @@ sub do_select
 	print_usage_select($cmd, $opts) if $in_file eq '' or not @columns;
 
 	my $d = load_tsv($in_file, $no_header);
-	my %dict = map { $_ => 1 } df_get_names($d);
+	my %dict = map { $_ => 1 } @{$d->{names}};
 	my @col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
 	write_tsv($d, $out_file, { no_header => $no_header, columns => \@col_index });
 	exit 0;
@@ -1348,10 +1334,10 @@ sub do_cleanup
 				if ($item->{$_} // '') { $x = 1; last; }
 			}
 			$x;
-		} df_get_names($d);
+		} @{$d->{names}};
 	@{$d->{data}} = grep {
 			my $x = 0;
-			for my $name (df_get_names($d)) {
+			for my $name (@{$d->{names}}) {
 				if ($_->{$name} // '') { $x = 1; last; }
 			}
 			$x;
@@ -1441,16 +1427,16 @@ sub do_tsv_summary
 	my $d = load_tsv($in_file);
 	my %results = ();
 	my @summary_fields = ("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.");
-	for my $name (df_get_names($d)) {
+	for my $name (@{$d->{names}}) {
 		$results{$name} = calc_summary($d->{data}, $name, \@summary_fields);
 	}
 	my $summary = {
-		names => [ "stat_name", df_get_names($d) ],
+		names => [ "stat_name", @{$d->{names}} ],
 		data => [ ]
 	};
 	for my $stat_name (@summary_fields) {
 		my %item = ( stat_name => $stat_name );
-		for my $name (df_get_names($d)) {
+		for my $name (@{$d->{names}}) {
 			$item{$name} = $results{$name}->{$stat_name};
 		}
 		push @{$summary->{data}}, \%item;
@@ -1494,7 +1480,7 @@ sub do_tsv_to_excel
 
 		my $format = $excel->add_format( bold => 1, bg_color => '#dddddd', align => 'center', border => 1 );
 		my ($row, $col) = (0, 0);
-		for my $name (df_get_names($d)) {
+		for my $name (@{$d->{names}}) {
 			$worksheet->write($row, $col++, decode("utf8", $name), $format);
 		}
 
@@ -1503,7 +1489,7 @@ sub do_tsv_to_excel
 		for my $item (@{$d->{data}}) {
 			$row++;
 			$col = 0;
-			for my $name (df_get_names($d)) {
+			for my $name (@{$d->{names}}) {
 				$worksheet->write($row, $col++, decode("utf8", $item->{$name}), $format);
 			}
 		}
