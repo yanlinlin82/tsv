@@ -821,6 +821,15 @@ sub load_tsv
 	return { names => \@names, data => \@data };
 }
 
+sub has_na
+{
+	my ($item, $names) = @_;
+	for my $name (@{$names}) {
+		return 1 unless ($item->{$name} // '');
+	}
+	return 0;
+}
+
 sub write_tsv
 {
 	my ($d, $out_file, $opts) = @_;
@@ -841,6 +850,7 @@ sub write_tsv
 	while (my $item = tsv_fetch_row($d)) {
 		++$row_number;
 		next if exists $opts->{filter} and not check_filter_ok($item, $opts->{filter});
+		next if exists $opts->{remove_na} and has_na($item, \@names);
 		print $fh $row_number, "\t" if $show_row_numbers;
 		print $fh join($sep, map { $item->{$_} // '' } (@names)), "\n";
 	}
@@ -1409,22 +1419,18 @@ sub do_cleanup
 		print_usage_cleanup($cmd, $opts) if -t STDIN;
 		$in_file = $STDIN;
 	}
+
 	my $d = load_tsv($in_file, $no_header);
-	@{$d->{names}} = grep {
-			my $x = 0;
-			for my $item (@{$d->{data}}) {
-				if ($item->{$_} // '') { $x = 1; last; }
-			}
-			$x;
-		} @{$d->{names}};
-	@{$d->{data}} = grep {
-			my $x = 0;
-			for my $name (@{$d->{names}}) {
-				if ($_->{$name} // '') { $x = 1; last; }
-			}
-			$x;
-		} @{$d->{data}};
-	write_tsv($d, $STDOUT);
+	my @col_index = ();
+	for my $i (0 .. $#{$d->{names}}) {
+		my $name = $d->{names}->[$i];
+		my $has_data = 0;
+		for my $item (@{$d->{data}}) {
+			if ($item->{$name} // '') { $has_data = 1; last; }
+		}
+		push @col_index, $i + 1 if $has_data;
+	}
+	write_tsv($d, $STDOUT, { columns => \@col_index, remove_na => 1 });
 	exit 0;
 }
 
