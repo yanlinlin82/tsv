@@ -15,9 +15,9 @@ my $STDOUT = '/dev/stdout';
 my $dispatcher = {
 	"cat"       => \&do_cat,
 	"align"     => \&do_align,
-	"view"      => \&do_tsv_view,
+	"view"      => \&do_view,
 	"column"    => \&do_column,
-	"transpose" => \&do_tsv_transpose,
+	"transpose" => \&do_transpose,
 	"select"    => \&do_tsv_select,
 	"subset"    => \&do_tsv_subset,
 	"head"      => \&do_tsv_head,
@@ -164,10 +164,18 @@ Commands:
 	exit 1;
 }
 
-sub do_version
+sub print_usage_cat
 {
-	print get_version_string(), "\n";
-	exit 0;
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
 }
 
 sub print_usage_align
@@ -186,21 +194,7 @@ Options:
 	exit 1;
 }
 
-sub print_usage_cat
-{
-	my ($cmd, $opts) = @_;
-	print "
-Usage: $cmd_prefix$cmd [options] <in.txt>
-
-Options:
-   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
-   --no-header   Input file does not have header line
-
-";
-	exit 1;
-}
-
-sub print_usage_cleanup
+sub print_usage_view
 {
 	my ($cmd, $opts) = @_;
 	print "
@@ -228,153 +222,36 @@ Options:
 	exit 1;
 }
 
+sub print_usage_transpose
+{
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_cleanup
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
 ############################################################
 # data frame manipulating
 
 sub df_get_names { my $d = shift; return @{$d->{names}}; }
-
-############################################################
-# commands
-
-sub do_align
-{
-	my ($cmd, @args) = @_;
-
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
-	my $max_align_column_width = 100;
-	my $max_align_check_lines = 1000;
-	my $opts = {
-		'--no-header' => sub { $no_header = 1; },
-		'--max-width' => \$max_align_column_width,
-		'--max-check' => \$max_align_check_lines,
-		'-o' => \$out_file
-	};
-	parse_args($cmd, \@args, \&print_usage_align, $opts, [ \$in_file ]);
-
-	if ($in_file eq '') {
-		print_usage_align($cmd, $opts) if -t STDIN;
-		$in_file = $STDIN;
-	}
-	my $d = load_tsv($in_file, $no_header);
-	my %width = map { $_ => ($no_header ? 0 : get_text_width($_)) } @{$d->{names}};
-	my $counter = 0;
-	for my $item (@{$d->{data}}) {
-		for my $name (@{$d->{names}}) {
-			if ($width{$name} < $max_align_column_width) {
-				my $width = get_text_width($item->{$name});
-				$width = $max_align_column_width if $width > $max_align_column_width;
-				$width{$name} = $width if $width{$name} < $width;
-			}
-		}
-		last if ++$counter >= $max_align_check_lines;
-	}
-	open my $ofh, '>', $out_file or die "Error: Can not create file '$out_file'";
-	if (not $no_header) {
-		print $ofh join("  ", map { align_text($_, $width{$_}) } @{$d->{names}}), "\n";
-	}
-	for my $item (@{$d->{data}}) {
-		print $ofh join("  ", map { align_text($item->{$_}, $width{$_}) } @{$d->{names}}), "\n";
-	}
-	close $ofh;
-	exit 0;
-}
-
-sub do_cat
-{
-	my ($cmd, @args) = @_;
-
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
-	my $opts = {
-		'--no-header' => sub { $no_header = 1; },
-		'-o' => \$out_file
-	};
-	parse_args($cmd, \@args, \&print_usage_cat, $opts, [ \$in_file ]);
-
-	if ($in_file eq '') {
-		print_usage_cat($cmd, $opts) if -t STDIN;
-		$in_file = $STDIN;
-	}
-	my $d = load_tsv($in_file, $no_header);
-	write_tsv($d, $out_file);
-	exit 0;
-}
-
-sub do_cleanup
-{
-	my ($cmd, @args) = @_;
-
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
-	my $opts = {
-		'--no-header' => sub { $no_header = 1; },
-		'-o' => \$out_file
-	};
-	parse_args($cmd, \@args, \&print_usage_cleanup, $opts, [ \$in_file ]);
-
-	if ($in_file eq '') {
-		print_usage_cleanup($cmd, $opts) if -t STDIN;
-		$in_file = $STDIN;
-	}
-	my $d = load_tsv($in_file, $no_header);
-	@{$d->{names}} = grep {
-			my $x = 0;
-			for my $item (@{$d->{data}}) {
-				if ($item->{$_} // '') { $x = 1; last; }
-			}
-			$x;
-		} df_get_names($d);
-	@{$d->{data}} = grep {
-			my $x = 0;
-			for my $name (df_get_names($d)) {
-				if ($_->{$name} // '') { $x = 1; last; }
-			}
-			$x;
-		} @{$d->{data}};
-	write_tsv($d);
-	exit 0;
-}
-
-sub do_column
-{
-	my ($cmd, @args) = @_;
-
-	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
-	my $opts = {
-		'--no-header' => sub { $no_header = 1; },
-		'-o' => \$out_file
-	};
-	parse_args($cmd, \@args, \&print_usage_column, $opts, [ \$in_file ]);
-
-	if ($in_file eq '') {
-		print_usage_column($cmd, $opts) if -t STDIN;
-		$in_file = $STDIN;
-	}
-	my $d = load_tsv($in_file, $no_header);
-	my $column = {
-		names => [ "number", "colname" ],
-		data => [ map { {
-				number => $_ + 1,
-				colname => $d->{names}->[$_]
-			} } (0 .. $#{$d->{names}}) ]
-	};
-	write_tsv($column);
-	exit 0;
-}
-
-sub do_tsv_view
-{
-	my $in_file;
-	if (scalar(@ARGV) >= 1) {
-		$in_file = shift @ARGV;
-	} elsif (not -t STDIN) {
-		$in_file = $STDIN;
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt>\n";
-		exit 1;
-	}
-	my $d = load_tsv($in_file);
-	view_tsv($d);
-	exit 0;
-}
 
 sub tsv_get_column_count
 {
@@ -406,90 +283,6 @@ sub tsv_sort
 	$column_count = $max_column_count if $column_count > $max_column_count;
 	my $column = $d->{names}->[$column_count - 1];
 	@{$d->{data}} = sort { ($a->{$column} // '') cmp ($b->{$column} // '') } @{$d->{data}};
-}
-
-sub do_tsv_sort
-{
-	my ($in_file, $column_count);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $column_count) = @ARGV;
-	} elsif (scalar(@ARGV) == 1) {
-		if (not -t STDIN) {
-			($in_file, $column_count) = ($STDIN, $ARGV[0]);
-		} else {
-			($in_file, $column_count) = ($ARGV[0], 1);
-		}
-	} else {
-		if (-t STDIN) {
-			print "Usage: $cmd_prefix$cmd <in.txt> [column_count]\n";
-			exit 1;
-		}
-		($in_file, $column_count) = ($STDIN, 1);
-	}
-	my $d = load_tsv($in_file);
-	tsv_sort($d, $column_count);
-	write_tsv($d);
-	exit 0;
-}
-
-sub do_tsv_merge
-{
-	if (scalar @ARGV < 2) {
-		print "Usage: $cmd_prefix$cmd <in_1.txt> <in_2.txt>...\n";
-		print "       $cmd_prefix$cmd -f <file-list.txt>\n";
-		exit 1;
-	}
-	my @in_files;
-	if ($ARGV[0] ne "-f") {
-		@in_files = @ARGV;
-	} else {
-		shift @ARGV;
-		die "Error: Missing parameter after '-f'" unless @ARGV;
-		open my $fh, "<", ($ARGV[0] eq "-" ? $STDIN : $ARGV[0]) or die "Error: Can not open file '$ARGV[0]'";
-		@in_files = map { chomp; $_ } <$fh>;
-		close $fh;
-	}
-	my $d = load_tsv(shift @in_files);
-	while (my $filename = shift @in_files) {
-		$d = merge_tsv($d, load_tsv($filename));
-	}
-	write_tsv($d);
-	exit 0;
-}
-
-sub do_tsv_head
-{
-	my ($in_file, $num, $sign);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $num) = @ARGV;
-	} elsif (scalar(@ARGV) == 1) {
-		if (not -t STDIN) {
-			($in_file, $num) = ($STDIN, $ARGV[0]);
-		} else {
-			($in_file, $num) = ($ARGV[0], 10);
-		}
-	} else {
-		if (-t STDIN) {
-			print "Usage: $cmd_prefix$cmd <in.txt> [NUM]\n";
-			print "Note:\n";
-			print "  1. 'NUM' should be an integer number (defaults to 10), print the first NUM lines\n";
-			print "  2. if 'NUM' is leading with '-', print all but the last NUM lines\n";
-			exit 1;
-		}
-		($in_file, $num) = ($STDIN, 10);
-	}
-	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
-	($sign, $num) = ($1, $2);
-	my $d = load_tsv($in_file);
-	my $max_num = scalar @{$d->{data}};
-	$num = $max_num if $num > $max_num;
-	if ($sign eq "-") {
-		@{$d->{data}} = @{$d->{data}}[0 .. ($max_num - $num - 1)];
-	} else {
-		@{$d->{data}} = @{$d->{data}}[0 .. ($num - 1)];
-	}
-	write_tsv($d);
-	exit 0;
 }
 
 sub prepare_join_header
@@ -576,114 +369,6 @@ sub join_tsv
 	};
 }
 
-sub do_tsv_join
-{
-	my ($left_file, $right_file, $column);
-	if (scalar(@ARGV) >= 3) {
-		($left_file, $right_file, $column) = @ARGV;
-	} elsif (scalar(@ARGV) == 2 and not -t STDIN) {
-		($left_file, $right_file, $column) = ($STDIN, @ARGV);
-	} else {
-		print "Usage: $cmd_prefix$cmd <in-left.txt> <in-right.txt> <column>\n";
-		exit 1;
-	}
-	my $tsv1 = load_tsv($left_file);
-	my $tsv2 = load_tsv($right_file);
-	my $d = join_tsv($tsv1, $tsv2, $column);
-	write_tsv($d);
-	exit 0;
-}
-
-sub do_tsv_tail
-{
-	my ($in_file, $num, $sign);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $num) = @ARGV;
-	} elsif (scalar(@ARGV) == 1) {
-		if (not -t STDIN) {
-			($in_file, $num) = ($STDIN, $ARGV[0]);
-		} else {
-			($in_file, $num) = ($ARGV[0], 10);
-		}
-	} else {
-		if (-t STDIN) {
-			print "Usage: $cmd_prefix$cmd <in.txt> [NUM]\n";
-			print "Note:\n";
-			print "  1. 'NUM' should be an integer number (defaults to 10), print the last NUM lines\n";
-			print "  2. if 'NUM' is leading with '+', print lines starting with line NUM\n";
-			exit 1;
-		}
-		($in_file, $num) = ($STDIN, 10);
-	}
-	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
-	($sign, $num) = ($1, $2);
-	my $d = load_tsv($in_file);
-	my $max_num = scalar(@{$d->{data}});
-	$num = $max_num if $num > $max_num;
-	if ($sign eq "+") {
-		@{$d->{data}} = @{$d->{data}}[($num - 1) .. ($max_num - 1)];
-	} else {
-		@{$d->{data}} = @{$d->{data}}[($max_num - $num) .. ($max_num - 1)];
-	}
-	write_tsv($d);
-	exit 0;
-}
-
-sub do_tsv_select
-{
-	my ($in_file, $fields);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $fields) = @ARGV;
-	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $fields) = ($STDIN, $ARGV[0]);
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt> <FIELD1,FIELD2,...>\n";
-		exit 1;
-	}
-	my $d = load_tsv($in_file);
-	my %colname = map { $_ => 1 } df_get_names($d);
-	my @names = ();
-	for my $name (split(",", $fields)) {
-		if ($name =~ /^([0-9][0-9]*)$/) {
-			my $i = $1;
-			die "Error: Unexpected column count '$i'" if $i < 1 or $i > scalar(df_get_names($d));
-			$name = $d->{names}->[$i - 1];
-		} else {
-			die "Error: Unexpected column name '$name'" unless exists $colname{$name};
-		}
-		push @names, $name;
-	}
-	write_tsv($d, "/dev/stdout", "\t", \@names);
-	exit 0;
-}
-
-sub do_tsv_subset
-{
-	my ($in_file, $rows);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $rows) = @ARGV;
-	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $rows) = ($STDIN, $ARGV[0]);
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt> <ROWS1,ROW2,...>\n";
-		exit 1;
-	}
-	my $d = load_tsv($in_file);
-	my @rows = ();
-	for my $row (split(",", $rows)) {
-		if ($row =~ /^([0-9][0-9]*)$/) {
-			if ($row >= 1 and $row <= scalar(@{$d->{data}})) {
-				push @rows, $row - 1;
-			}
-		} else {
-			die "Error: Unexpected row count '$row'";
-		}
-	}
-	@{$d->{data}} = @{$d->{data}}[@rows];
-	write_tsv($d);
-	exit 0;
-}
-
 sub is_numeric
 {
 	my $val = shift @_;
@@ -705,163 +390,6 @@ sub parse_cond
 	my $val = do { no warnings; eval($cond) };
 	#print " val = '$val'\n";
 	return $val;
-}
-
-sub do_tsv_filter
-{
-	my ($in_file, $cond);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $cond) = @ARGV;
-	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $cond) = ($STDIN, $ARGV[0]);
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt> <condition>\n";
-		exit 1;
-	}
-	my $d = load_tsv($in_file);
-	my $row_count = scalar(@{$d->{data}});
-	my @data = ();
-	for my $item (@{$d->{data}}) {
-		push @data, $item if parse_cond($cond, $item);
-	}
-	@{$d->{data}} = @data;
-	write_tsv($d);
-	exit 0;
-}
-
-sub print_usage_transpose
-{
-	print "
-Usage: $cmd_prefix$cmd [options] <in.txt>
-
-Options:
-   --no-header   Input file does not have header line
-
-";
-	exit 1;
-}
-
-sub do_tsv_transpose
-{
-	my $in_file = '';
-	my $no_header = 0;
-	while (my $arg = shift @ARGV) {
-		if ($arg =~ /^-/) {
-			if ($arg eq '-h' or $arg eq '--help') {
-				print_usage_transpose();
-			} elsif ($arg eq '--no-header') {
-				$no_header = 1;
-			} else {
-				die "Error: Unknown option '$arg' for '$cmd_prefix$cmd'";
-			}
-		} elsif ($in_file eq '') {
-			$in_file = $arg;
-		} else {
-			die "Error: Unexpected parameter '$arg' for '$cmd_prefix$cmd'";
-		}
-	}
-	if ($in_file eq '') {
-		if (-t STDIN) {
-			print_usage_align();
-		} else {
-			$in_file = $STDIN;
-		}
-	}
-	my $d = load_tsv($in_file, $no_header);
-	my $res = {
-		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
-		data => [ map {
-				my $name = $_;
-				{
-					"colname" => $name,
-					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
-				}
-			} df_get_names($d) ]
-	};
-	write_tsv($res);
-	exit 0;
-}
-
-sub view_tsv
-{
-	my $d = shift @_;
-	my $max_name_width = 0;
-	my $names = tsv_get_names($d);
-	my $id_width = get_text_width(scalar(@{$names}) - 1);
-	my $max_id_width = ($id_width >= length('id') ? $id_width : length('id'));
-	for my $name (@{$names}) {
-		my $width = get_text_width($name);
-		$max_name_width = $width if $max_name_width < $width;
-	}
-	my $row = 0;
-	while (my $item = tsv_fetch_row($d)) {
-		print "# row " . ++$row . "\n";
-		print join("  ",
-			align_text('id', $max_id_width),
-			align_text('column', $max_name_width),
-			'value'), "\n";
-		my $column_id = 0;
-		for my $name (@{$names}) {
-			print join("  ",
-				align_text(++$column_id, $max_id_width),
-				align_text($name, $max_name_width),
-				$item->{$name}), "\n";
-		}
-		print "\n";
-	}
-	exit 0;
-}
-
-sub do_tsv_to_excel
-{
-	eval("use Encode");
-	die "Error: Perl module 'Encode' should be installed!" if $@;
-	eval("use Excel::Writer::XLSX");
-	die "Error: Perl module 'Excel::Writer::XLSX' should be installed!" if $@;
-
-	if (scalar @ARGV < 2) {
-		print "Usage: $cmd_prefix$cmd <out.xlsx> <in.tsv>...\n";
-		exit 1;
-	}
-	my $out_xlsx = shift @ARGV;
-	if (-e $out_xlsx and $out_xlsx !~ /\.xlsx$/) {
-		print "Warning: output Excel filename should be the first parameter!\n";
-		exit 1;
-	}
-	my $excel = Excel::Writer::XLSX->new($out_xlsx);
-
-	for my $arg (@ARGV) {
-		my $in_tsv = $arg;
-		my $name;
-		if (not -e $in_tsv and $arg =~ /^(.+)=(.+)$/) {
-			($name, $in_tsv) = ($1, $2);
-		} else {
-			$name = $in_tsv;
-			$name =~ s/^.*\///g;
-			$name =~ s/\.[^\.]+$//;
-		}
-		my $worksheet = $excel->add_worksheet(decode("utf8", $name));
-		$worksheet->add_write_handler(qr[\w], \&store_string_widths);
-
-		my $d = load_tsv($in_tsv);
-
-		my $format = $excel->add_format( bold => 1, bg_color => '#dddddd', align => 'center', border => 1 );
-		my ($row, $col) = (0, 0);
-		for my $name (df_get_names($d)) {
-			$worksheet->write($row, $col++, decode("utf8", $name), $format);
-		}
-
-		$worksheet->freeze_panes(1, 0); # Freeze the first row
-		$format = $excel->add_format( border => 1 );
-		for my $item (@{$d->{data}}) {
-			$row++;
-			$col = 0;
-			for my $name (df_get_names($d)) {
-				$worksheet->write($row, $col++, decode("utf8", $item->{$name}), $format);
-			}
-		}
-		autofit_columns($worksheet);
-	}
 }
 
 sub get_unique_name
@@ -1298,6 +826,451 @@ sub calc_summary
 	};
 }
 
+sub write_align
+{
+	my ($d, $no_header, $out_file, $max_width, $max_check) = @_;
+	my %width = map { $_ => ($no_header ? 0 : get_text_width($_)) } @{$d->{names}};
+	my $counter = 0;
+	for my $item (@{$d->{data}}) {
+		for my $name (@{$d->{names}}) {
+			if ($width{$name} < $max_width) {
+				my $width = get_text_width($item->{$name});
+				$width = $max_width if $width > $max_width;
+				$width{$name} = $width if $width{$name} < $width;
+			}
+		}
+		last if ++$counter >= $max_check;
+	}
+	open my $ofh, '>', $out_file or die "Error: Can not create file '$out_file'";
+	if (not $no_header) {
+		print $ofh join("  ", map { align_text($_, $width{$_}) } @{$d->{names}}), "\n";
+	}
+	for my $item (@{$d->{data}}) {
+		print $ofh join("  ", map { align_text($item->{$_}, $width{$_}) } @{$d->{names}}), "\n";
+	}
+	close $ofh;
+}
+
+sub write_view
+{
+	my ($d, $out_file) = @_;
+	open my $ofh, '>', $out_file or die "Error: Can not create file '$out_file'";
+	my $max_name_width = length('column');
+	my $names = tsv_get_names($d);
+	my $id_width = get_text_width(scalar(@{$names}) - 1);
+	my $max_id_width = ($id_width >= length('id') ? $id_width : length('id'));
+	for my $name (@{$names}) {
+		my $width = get_text_width($name);
+		$max_name_width = $width if $max_name_width < $width;
+	}
+	my $row = 0;
+	while (my $item = tsv_fetch_row($d)) {
+		print $ofh "# row " . ++$row . "\n";
+		print $ofh join("  ",
+			align_text('id', $max_id_width),
+			align_text('column', $max_name_width),
+			'value'), "\n";
+		my $column_id = 0;
+		for my $name (@{$names}) {
+			print $ofh join("  ",
+				align_text(++$column_id, $max_id_width),
+				align_text($name, $max_name_width),
+				$item->{$name}), "\n";
+		}
+		print $ofh "\n";
+	}
+	close $ofh;
+}
+
+sub write_column
+{
+	my ($d, $out_file) = @_;
+	my $column = {
+		names => [ "number", "colname" ],
+		data => [ map { {
+				number => $_ + 1,
+				colname => $d->{names}->[$_]
+			} } (0 .. $#{$d->{names}}) ]
+	};
+	write_tsv($column, $out_file);
+}
+
+############################################################
+# commands
+
+sub do_cat
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_cat, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_cat($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+	my $d = load_tsv($in_file, $no_header);
+	write_tsv($d, $out_file);
+	exit 0;
+}
+
+sub do_align
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $max_width = 100;
+	my $max_check = 1000;
+	my $opts = {
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
+		'--max-width' => \$max_width,
+		'--max-check' => \$max_check,
+	};
+	parse_args($cmd, \@args, \&print_usage_align, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_align($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+	my $d = load_tsv($in_file, $no_header);
+	write_align($d, $no_header, $out_file, $max_width, $max_check);
+	exit 0;
+}
+
+sub do_view
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'--no-header' => sub { $no_header = 1; },
+		'-o' => \$out_file
+	};
+	parse_args($cmd, \@args, \&print_usage_view, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_cat($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+	my $d = load_tsv($in_file, $no_header);
+	write_view($d, $out_file);
+	exit 0;
+}
+
+sub do_column
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'--no-header' => sub { $no_header = 1; },
+		'-o' => \$out_file
+	};
+	parse_args($cmd, \@args, \&print_usage_column, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_column($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+	my $d = load_tsv($in_file, $no_header);
+	write_column($d, $out_file);
+	exit 0;
+}
+
+sub do_transpose
+{
+	my $in_file = '';
+	my $no_header = 0;
+	while (my $arg = shift @ARGV) {
+		if ($arg =~ /^-/) {
+			if ($arg eq '-h' or $arg eq '--help') {
+				print_usage_transpose();
+			} elsif ($arg eq '--no-header') {
+				$no_header = 1;
+			} else {
+				die "Error: Unknown option '$arg' for '$cmd_prefix$cmd'";
+			}
+		} elsif ($in_file eq '') {
+			$in_file = $arg;
+		} else {
+			die "Error: Unexpected parameter '$arg' for '$cmd_prefix$cmd'";
+		}
+	}
+	if ($in_file eq '') {
+		if (-t STDIN) {
+			print_usage_align();
+		} else {
+			$in_file = $STDIN;
+		}
+	}
+	my $d = load_tsv($in_file, $no_header);
+	my $res = {
+		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
+		data => [ map {
+				my $name = $_;
+				{
+					"colname" => $name,
+					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
+				}
+			} df_get_names($d) ]
+	};
+	write_tsv($res);
+	exit 0;
+}
+
+sub do_tsv_select
+{
+	my ($in_file, $fields);
+	if (scalar(@ARGV) >= 2) {
+		($in_file, $fields) = @ARGV;
+	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
+		($in_file, $fields) = ($STDIN, $ARGV[0]);
+	} else {
+		print "Usage: $cmd_prefix$cmd <in.txt> <FIELD1,FIELD2,...>\n";
+		exit 1;
+	}
+	my $d = load_tsv($in_file);
+	my %colname = map { $_ => 1 } df_get_names($d);
+	my @names = ();
+	for my $name (split(",", $fields)) {
+		if ($name =~ /^([0-9][0-9]*)$/) {
+			my $i = $1;
+			die "Error: Unexpected column count '$i'" if $i < 1 or $i > scalar(df_get_names($d));
+			$name = $d->{names}->[$i - 1];
+		} else {
+			die "Error: Unexpected column name '$name'" unless exists $colname{$name};
+		}
+		push @names, $name;
+	}
+	write_tsv($d, "/dev/stdout", "\t", \@names);
+	exit 0;
+}
+
+sub do_tsv_subset
+{
+	my ($in_file, $rows);
+	if (scalar(@ARGV) >= 2) {
+		($in_file, $rows) = @ARGV;
+	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
+		($in_file, $rows) = ($STDIN, $ARGV[0]);
+	} else {
+		print "Usage: $cmd_prefix$cmd <in.txt> <ROWS1,ROW2,...>\n";
+		exit 1;
+	}
+	my $d = load_tsv($in_file);
+	my @rows = ();
+	for my $row (split(",", $rows)) {
+		if ($row =~ /^([0-9][0-9]*)$/) {
+			if ($row >= 1 and $row <= scalar(@{$d->{data}})) {
+				push @rows, $row - 1;
+			}
+		} else {
+			die "Error: Unexpected row count '$row'";
+		}
+	}
+	@{$d->{data}} = @{$d->{data}}[@rows];
+	write_tsv($d);
+	exit 0;
+}
+
+sub do_tsv_head
+{
+	my ($in_file, $num, $sign);
+	if (scalar(@ARGV) >= 2) {
+		($in_file, $num) = @ARGV;
+	} elsif (scalar(@ARGV) == 1) {
+		if (not -t STDIN) {
+			($in_file, $num) = ($STDIN, $ARGV[0]);
+		} else {
+			($in_file, $num) = ($ARGV[0], 10);
+		}
+	} else {
+		if (-t STDIN) {
+			print "Usage: $cmd_prefix$cmd <in.txt> [NUM]\n";
+			print "Note:\n";
+			print "  1. 'NUM' should be an integer number (defaults to 10), print the first NUM lines\n";
+			print "  2. if 'NUM' is leading with '-', print all but the last NUM lines\n";
+			exit 1;
+		}
+		($in_file, $num) = ($STDIN, 10);
+	}
+	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
+	($sign, $num) = ($1, $2);
+	my $d = load_tsv($in_file);
+	my $max_num = scalar @{$d->{data}};
+	$num = $max_num if $num > $max_num;
+	if ($sign eq "-") {
+		@{$d->{data}} = @{$d->{data}}[0 .. ($max_num - $num - 1)];
+	} else {
+		@{$d->{data}} = @{$d->{data}}[0 .. ($num - 1)];
+	}
+	write_tsv($d);
+	exit 0;
+}
+
+sub do_tsv_tail
+{
+	my ($in_file, $num, $sign);
+	if (scalar(@ARGV) >= 2) {
+		($in_file, $num) = @ARGV;
+	} elsif (scalar(@ARGV) == 1) {
+		if (not -t STDIN) {
+			($in_file, $num) = ($STDIN, $ARGV[0]);
+		} else {
+			($in_file, $num) = ($ARGV[0], 10);
+		}
+	} else {
+		if (-t STDIN) {
+			print "Usage: $cmd_prefix$cmd <in.txt> [NUM]\n";
+			print "Note:\n";
+			print "  1. 'NUM' should be an integer number (defaults to 10), print the last NUM lines\n";
+			print "  2. if 'NUM' is leading with '+', print lines starting with line NUM\n";
+			exit 1;
+		}
+		($in_file, $num) = ($STDIN, 10);
+	}
+	die "Error: Invalid NUM value '$num'" unless $num =~ /^([-+]?)([0-9][0-9]*)$/;
+	($sign, $num) = ($1, $2);
+	my $d = load_tsv($in_file);
+	my $max_num = scalar(@{$d->{data}});
+	$num = $max_num if $num > $max_num;
+	if ($sign eq "+") {
+		@{$d->{data}} = @{$d->{data}}[($num - 1) .. ($max_num - 1)];
+	} else {
+		@{$d->{data}} = @{$d->{data}}[($max_num - $num) .. ($max_num - 1)];
+	}
+	write_tsv($d);
+	exit 0;
+}
+
+sub do_tsv_filter
+{
+	my ($in_file, $cond);
+	if (scalar(@ARGV) >= 2) {
+		($in_file, $cond) = @ARGV;
+	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
+		($in_file, $cond) = ($STDIN, $ARGV[0]);
+	} else {
+		print "Usage: $cmd_prefix$cmd <in.txt> <condition>\n";
+		exit 1;
+	}
+	my $d = load_tsv($in_file);
+	my $row_count = scalar(@{$d->{data}});
+	my @data = ();
+	for my $item (@{$d->{data}}) {
+		push @data, $item if parse_cond($cond, $item);
+	}
+	@{$d->{data}} = @data;
+	write_tsv($d);
+	exit 0;
+}
+
+sub do_cleanup
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'--no-header' => sub { $no_header = 1; },
+		'-o' => \$out_file
+	};
+	parse_args($cmd, \@args, \&print_usage_cleanup, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_cleanup($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+	my $d = load_tsv($in_file, $no_header);
+	@{$d->{names}} = grep {
+			my $x = 0;
+			for my $item (@{$d->{data}}) {
+				if ($item->{$_} // '') { $x = 1; last; }
+			}
+			$x;
+		} df_get_names($d);
+	@{$d->{data}} = grep {
+			my $x = 0;
+			for my $name (df_get_names($d)) {
+				if ($_->{$name} // '') { $x = 1; last; }
+			}
+			$x;
+		} @{$d->{data}};
+	write_tsv($d);
+	exit 0;
+}
+
+sub do_tsv_sort
+{
+	my ($in_file, $column_count);
+	if (scalar(@ARGV) >= 2) {
+		($in_file, $column_count) = @ARGV;
+	} elsif (scalar(@ARGV) == 1) {
+		if (not -t STDIN) {
+			($in_file, $column_count) = ($STDIN, $ARGV[0]);
+		} else {
+			($in_file, $column_count) = ($ARGV[0], 1);
+		}
+	} else {
+		if (-t STDIN) {
+			print "Usage: $cmd_prefix$cmd <in.txt> [column_count]\n";
+			exit 1;
+		}
+		($in_file, $column_count) = ($STDIN, 1);
+	}
+	my $d = load_tsv($in_file);
+	tsv_sort($d, $column_count);
+	write_tsv($d);
+	exit 0;
+}
+
+sub do_tsv_merge
+{
+	if (scalar @ARGV < 2) {
+		print "Usage: $cmd_prefix$cmd <in_1.txt> <in_2.txt>...\n";
+		print "       $cmd_prefix$cmd -f <file-list.txt>\n";
+		exit 1;
+	}
+	my @in_files;
+	if ($ARGV[0] ne "-f") {
+		@in_files = @ARGV;
+	} else {
+		shift @ARGV;
+		die "Error: Missing parameter after '-f'" unless @ARGV;
+		open my $fh, "<", ($ARGV[0] eq "-" ? $STDIN : $ARGV[0]) or die "Error: Can not open file '$ARGV[0]'";
+		@in_files = map { chomp; $_ } <$fh>;
+		close $fh;
+	}
+	my $d = load_tsv(shift @in_files);
+	while (my $filename = shift @in_files) {
+		$d = merge_tsv($d, load_tsv($filename));
+	}
+	write_tsv($d);
+	exit 0;
+}
+
+sub do_tsv_join
+{
+	my ($left_file, $right_file, $column);
+	if (scalar(@ARGV) >= 3) {
+		($left_file, $right_file, $column) = @ARGV;
+	} elsif (scalar(@ARGV) == 2 and not -t STDIN) {
+		($left_file, $right_file, $column) = ($STDIN, @ARGV);
+	} else {
+		print "Usage: $cmd_prefix$cmd <in-left.txt> <in-right.txt> <column>\n";
+		exit 1;
+	}
+	my $tsv1 = load_tsv($left_file);
+	my $tsv2 = load_tsv($right_file);
+	my $d = join_tsv($tsv1, $tsv2, $column);
+	write_tsv($d);
+	exit 0;
+}
+
 sub do_tsv_summary
 {
 	my $in_file;
@@ -1327,6 +1300,64 @@ sub do_tsv_summary
 		push @{$summary->{data}}, \%item;
 	}
 	write_tsv($summary);
+	exit 0;
+}
+
+sub do_tsv_to_excel
+{
+	eval("use Encode");
+	die "Error: Perl module 'Encode' should be installed!" if $@;
+	eval("use Excel::Writer::XLSX");
+	die "Error: Perl module 'Excel::Writer::XLSX' should be installed!" if $@;
+
+	if (scalar @ARGV < 2) {
+		print "Usage: $cmd_prefix$cmd <out.xlsx> <in.tsv>...\n";
+		exit 1;
+	}
+	my $out_xlsx = shift @ARGV;
+	if (-e $out_xlsx and $out_xlsx !~ /\.xlsx$/) {
+		print "Warning: output Excel filename should be the first parameter!\n";
+		exit 1;
+	}
+	my $excel = Excel::Writer::XLSX->new($out_xlsx);
+
+	for my $arg (@ARGV) {
+		my $in_tsv = $arg;
+		my $name;
+		if (not -e $in_tsv and $arg =~ /^(.+)=(.+)$/) {
+			($name, $in_tsv) = ($1, $2);
+		} else {
+			$name = $in_tsv;
+			$name =~ s/^.*\///g;
+			$name =~ s/\.[^\.]+$//;
+		}
+		my $worksheet = $excel->add_worksheet(decode("utf8", $name));
+		$worksheet->add_write_handler(qr[\w], \&store_string_widths);
+
+		my $d = load_tsv($in_tsv);
+
+		my $format = $excel->add_format( bold => 1, bg_color => '#dddddd', align => 'center', border => 1 );
+		my ($row, $col) = (0, 0);
+		for my $name (df_get_names($d)) {
+			$worksheet->write($row, $col++, decode("utf8", $name), $format);
+		}
+
+		$worksheet->freeze_panes(1, 0); # Freeze the first row
+		$format = $excel->add_format( border => 1 );
+		for my $item (@{$d->{data}}) {
+			$row++;
+			$col = 0;
+			for my $name (df_get_names($d)) {
+				$worksheet->write($row, $col++, decode("utf8", $item->{$name}), $format);
+			}
+		}
+		autofit_columns($worksheet);
+	}
+}
+
+sub do_version
+{
+	print get_version_string(), "\n";
 	exit 0;
 }
 
