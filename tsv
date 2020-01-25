@@ -28,6 +28,7 @@ my $dispatcher = {
 	"merge"       => \&do_tsv_merge,
 	"join"        => \&do_tsv_join,
 	"summary"     => \&do_tsv_summary,
+	"to-csv"      => \&do_to_csv,
 	"to-excel"    => \&do_tsv_to_excel,
 	"version"     => \&do_version,
 };
@@ -326,6 +327,20 @@ Note:
 }
 
 sub print_usage_cleanup
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_to_csv
 {
 	my ($cmd, $opts) = @_;
 	print "
@@ -1442,6 +1457,27 @@ sub do_tsv_summary
 		push @{$summary->{data}}, \%item;
 	}
 	write_tsv($summary, $STDOUT);
+	exit 0;
+}
+
+sub do_to_csv
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_to_csv, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_to_csv($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+
+	my $d = load_tsv($in_file, $no_header);
+	write_tsv($d, $out_file, { sep => ',' });
 	exit 0;
 }
 
