@@ -43,3 +43,11 @@ chmod +x tsv
   version    show program version
   view       show file content, alias to 'cat'
 ```
+
+## Data Source
+
+The test data set `mtcars.txt` is exported from R package:
+
+```sh
+Rscript -e 'cat("name\t");write.table(mtcars,sep="\t",quote=FALSE)' > test/mtcars.txt
+```
