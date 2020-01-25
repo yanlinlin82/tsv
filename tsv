@@ -18,6 +18,7 @@ my $dispatcher = {
 	"view"        => \&do_view,
 	"column"      => \&do_column,
 	"transpose"   => \&do_transpose,
+	"dim"         => \&do_dim,
 	"select"      => \&do_select,
 	"select-rows" => \&do_select_rows,
 	"head"        => \&do_head,
@@ -898,6 +899,19 @@ sub write_transpose
 	write_tsv($res, $out_file);
 }
 
+sub write_dim
+{
+	my ($d, $out_file) = @_;
+	my $res = {
+		names => [ "colname", "value" ],
+		data => [
+			{ colname => 'columns', 'value' => scalar(@{$d->{names}}) },
+			{ colname => 'rows', 'value' => scalar(@{$d->{data}}) }
+		]
+	};
+	write_tsv($res, $out_file);
+}
+
 sub expand_row_index
 {
 	my ($x, $n) = @_;
@@ -974,6 +988,7 @@ Commands:
       view          view file content in pretty better format
       column        list column names
       transpose     matrix transpose
+      dim           show matrix dimension
 
   - Selecting
       select        select columns
@@ -1064,6 +1079,21 @@ Options:
 }
 
 sub print_usage_transpose
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_dim
 {
 	my ($cmd, $opts) = @_;
 	print "
@@ -1378,6 +1408,28 @@ sub do_transpose
 
 	my $d = load_tsv($in_file, $no_header, $sep);
 	write_transpose($d, $out_file);
+	exit 0;
+}
+
+sub do_dim
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_dim, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_dim($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	write_dim($d, $out_file);
 	exit 0;
 }
 
