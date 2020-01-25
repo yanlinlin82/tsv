@@ -18,7 +18,7 @@ my $dispatcher = {
 	"view"      => \&do_view,
 	"column"    => \&do_column,
 	"transpose" => \&do_transpose,
-	"select"    => \&do_tsv_select,
+	"select"    => \&do_select,
 	"subset"    => \&do_tsv_subset,
 	"head"      => \&do_tsv_head,
 	"tail"      => \&do_tsv_tail,
@@ -71,11 +71,14 @@ sub fetch_arg
 
 sub parse_args
 {
-	my ($cmd, $args, $func_usage, $func_opts, $vars) = @_;
+	my ($cmd, $args, $func_usage, $func_opts, $vars, $rest_args) = @_;
 	my $i = 0;
+	my $parse_dash = 1;
 	while (my $arg = shift @{$args}) {
-		if ($arg =~ /^-/) {
-			if ($arg eq '-h' or $arg eq '--help') {
+		if ($parse_dash and $arg =~ /^-/) {
+			if ($arg eq '--') {
+				$parse_dash = 0;
+			} elsif ($arg eq '-h' or $arg eq '--help') {
 				$func_usage->($cmd, $func_opts);
 			} elsif ($arg eq '-v' or $arg eq '--verbose') {
 				++$verbose;
@@ -102,6 +105,8 @@ sub parse_args
 		} else {
 			if ($i < scalar(@{$vars})) {
 				${$vars->[$i++]} = $arg;
+			} elsif (defined $rest_args) {
+				push @{$rest_args}, $arg;
 			} else {
 				die "Error: Unexpected parameter '$arg'";
 			}
@@ -229,6 +234,32 @@ Usage: $cmd_prefix$cmd [options] <in.txt>
 
 Options:
    --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_select
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt> <columns>...
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   --no-header   Input file does not have header line
+
+Notes:
+  1. <columns> can be either numbers or names, separated by ',' or space.
+     e.g.:  $cmd_prefix$cmd in.txt id,name age
+            $cmd_prefix$cmd in.txt 1,4 8
+            $cmd_prefix$cmd in.txt 1,age 9
+  2. column numbers are 1-based integers.
+  3. column range is specified as format '<start>-<end>', '<start>:<end>' or '<start>..<end>'.
+     e.g.:  $cmd_prefix$cmd in.txt id..age
+            $cmd_prefix$cmd in.txt 1-9
+            $cmd_prefix$cmd in.txt -5
+            $cmd_prefix$cmd in.txt 5-
 
 ";
 	exit 1;
@@ -669,13 +700,18 @@ sub load_tsv
 
 sub write_tsv
 {
-	my ($d, $out_file, $sep, $names) = @_;
+	my ($d, $no_header, $out_file, $sep, $columns) = @_;
 	$sep = "\t" unless defined $sep;
-	$names = tsv_get_names($d) unless defined $names;
+	my @names;
+	if (not defined $columns) {
+		@names = @{$d->{names}};
+	} else {
+		@names = map { $d->{names}->[$_ - 1] } @{$columns};
+	}
 	open my $fh, ">", ($out_file // "/dev/stdout") or die "Error: Can not write to file '$out_file'";
-	print $fh join($sep, @{$names}), "\n";
+	print $fh join($sep, @names), "\n" unless $no_header;
 	while (my $item = tsv_fetch_row($d)) {
-		print $fh join($sep, map { $item->{$_} // '' } (@{$names})), "\n";
+		print $fh join($sep, map { $item->{$_} // '' } (@names)), "\n";
 	}
 	close $fh;
 }
@@ -892,7 +928,7 @@ sub write_column
 				colname => $d->{names}->[$_]
 			} } (0 .. $#{$d->{names}}) ]
 	};
-	write_tsv($column, $out_file);
+	write_tsv($column, 0, $out_file);
 }
 
 ############################################################
@@ -914,7 +950,7 @@ sub do_cat
 		$in_file = $STDIN;
 	}
 	my $d = load_tsv($in_file, $no_header);
-	write_tsv($d, $out_file);
+	write_tsv($d, 0, $out_file);
 	exit 0;
 }
 
@@ -1019,35 +1055,57 @@ sub do_transpose
 				}
 			} df_get_names($d) ]
 	};
-	write_tsv($res);
+	write_tsv($res, 0);
 	exit 0;
 }
 
-sub do_tsv_select
+sub expand_column_index
 {
-	my ($in_file, $fields);
-	if (scalar(@ARGV) >= 2) {
-		($in_file, $fields) = @ARGV;
-	} elsif (scalar(@ARGV) == 1 and not -t STDIN) {
-		($in_file, $fields) = ($STDIN, $ARGV[0]);
+	my ($x, $dict, $columns, $maybe_range) = @_;
+	my $n = scalar(@{$columns});
+	return $dict->{$x} if exists $dict->{$x};
+	my @s = split(',', $x);
+	if (scalar(@s) > 1) {
+		return map { expand_column_index($_, $dict, $columns, 1) } (@s);
+	}
+	if ($maybe_range and ($x =~ /^(.*)(\-|:|\.\.)(.*)$/)) {
+		my ($a, $b) = ($1, $3);
+		$a = 1 if $a eq '';
+		$b = $n if $b eq '';
+		$a = expand_column_index($a, $dict, $columns, 0);
+		$b = expand_column_index($b, $dict, $columns, 0);
+		if ($a <= $b) { return ($a .. $b); } else { return reverse ($b .. $a); }
+	}
+	if ($x =~ /^[0-9]+$/) {
+		return $x if $x >= 1 and $x <= $n;
+		die "Error: Invalid column number '$x'! It should be between 1 and $n";
 	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt> <FIELD1,FIELD2,...>\n";
-		exit 1;
+		die "Error: Invalid column name '$x'! Available colum names: ('" . join("', '", @{$columns}) . "')"
 	}
+}
+
+sub do_select
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file) = ('', 0, $STDOUT);
+	my $opts = {
+		'-o' => \$out_file,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	my @columns = ();
+	parse_args($cmd, \@args, \&print_usage_select, $opts, [ \$in_file ], \@columns);
+
+	if ($in_file ne '' and not -e $in_file and not -t STDIN) {
+		unshift @columns, $in_file;
+		$in_file = $STDIN;
+	}
+	print_usage_select($cmd, $opts) if $in_file eq '' or not @columns;
+
 	my $d = load_tsv($in_file);
-	my %colname = map { $_ => 1 } df_get_names($d);
-	my @names = ();
-	for my $name (split(",", $fields)) {
-		if ($name =~ /^([0-9][0-9]*)$/) {
-			my $i = $1;
-			die "Error: Unexpected column count '$i'" if $i < 1 or $i > scalar(df_get_names($d));
-			$name = $d->{names}->[$i - 1];
-		} else {
-			die "Error: Unexpected column name '$name'" unless exists $colname{$name};
-		}
-		push @names, $name;
-	}
-	write_tsv($d, "/dev/stdout", "\t", \@names);
+	my %dict = map { $_ => 1 } df_get_names($d);
+	my @col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
+	write_tsv($d, $no_header, $out_file, "\t", \@col_index);
 	exit 0;
 }
 
@@ -1074,7 +1132,7 @@ sub do_tsv_subset
 		}
 	}
 	@{$d->{data}} = @{$d->{data}}[@rows];
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1109,7 +1167,7 @@ sub do_tsv_head
 	} else {
 		@{$d->{data}} = @{$d->{data}}[0 .. ($num - 1)];
 	}
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1144,7 +1202,7 @@ sub do_tsv_tail
 	} else {
 		@{$d->{data}} = @{$d->{data}}[($max_num - $num) .. ($max_num - 1)];
 	}
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1166,7 +1224,7 @@ sub do_tsv_filter
 		push @data, $item if parse_cond($cond, $item);
 	}
 	@{$d->{data}} = @data;
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1200,7 +1258,7 @@ sub do_cleanup
 			}
 			$x;
 		} @{$d->{data}};
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1224,7 +1282,7 @@ sub do_tsv_sort
 	}
 	my $d = load_tsv($in_file);
 	tsv_sort($d, $column_count);
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1249,7 +1307,7 @@ sub do_tsv_merge
 	while (my $filename = shift @in_files) {
 		$d = merge_tsv($d, load_tsv($filename));
 	}
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1267,7 +1325,7 @@ sub do_tsv_join
 	my $tsv1 = load_tsv($left_file);
 	my $tsv2 = load_tsv($right_file);
 	my $d = join_tsv($tsv1, $tsv2, $column);
-	write_tsv($d);
+	write_tsv($d, 0);
 	exit 0;
 }
 
@@ -1299,7 +1357,7 @@ sub do_tsv_summary
 		}
 		push @{$summary->{data}}, \%item;
 	}
-	write_tsv($summary);
+	write_tsv($summary, 0);
 	exit 0;
 }
 
