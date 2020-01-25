@@ -76,14 +76,27 @@ sub parse_args
 	my $i = 0;
 	my $parse_dash = 1;
 	while (my $arg = shift @{$args}) {
-		if ($parse_dash and $arg =~ /^-/) {
+		if ($parse_dash and $arg =~ /^-.+/) {
 			if ($arg eq '--') {
 				$parse_dash = 0;
 			} elsif ($arg eq '-h' or $arg eq '--help') {
 				$func_usage->($cmd, $func_opts);
 			} elsif ($arg eq '-v' or $arg eq '--verbose') {
 				++$verbose;
-			} elsif (exists $func_opts->{$arg}) {
+			} elsif ($arg =~ /^-[^-].+/) {
+				my $curr = substr($arg, 0, 2);
+				if ($curr eq '-h' or $curr eq '-v') {
+					unshift @{$args}, ($curr, '-' . substr($arg, 2));
+				} else {
+					die "Error: Unknown option '$curr'" unless exists $func_opts->{$curr};
+					if (ref($func_opts->{$curr}) eq 'SCALAR') {
+						unshift @{$args}, ($curr, substr($arg, 2));
+					} else {
+						unshift @{$args}, ($curr, '-' . substr($arg, 2));
+					}
+				}
+			} else {
+				die "Error: Unknown option '$arg'" unless exists $func_opts->{$arg};
 				for (;;) {
 					my $type = ref($func_opts->{$arg});
 					if ($type eq 'CODE') {
@@ -100,8 +113,6 @@ sub parse_args
 						$arg = $s;
 					}
 				}
-			} else {
-				die "Error: Unknown option '$arg'";
 			}
 		} else {
 			if ($i < scalar(@{$vars})) {
@@ -165,7 +176,7 @@ Commands:
       to-excel      write to Excel (.xlsx) file
 
   - Others
-      version    show program version
+      version       show program version
 
 ';
 	exit 1;
