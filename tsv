@@ -17,14 +17,15 @@ my $dispatcher = {
 	"align"       => \&do_align,
 	"view"        => \&do_view,
 	"column"      => \&do_column,
-	"transpose"   => \&do_transpose,
 	"dim"         => \&do_dim,
+	"count"       => \&do_count,
 	"select"      => \&do_select,
 	"select-rows" => \&do_select_rows,
 	"head"        => \&do_head,
 	"tail"        => \&do_tail,
 	"filter"      => \&do_filter,
 	"cleanup"     => \&do_cleanup,
+	"transpose"   => \&do_transpose,
 	"sort"        => \&do_sort,
 	"merge"       => \&do_merge,
 	"join"        => \&do_tsv_join,
@@ -883,22 +884,6 @@ sub write_column
 	write_tsv($column, $out_file);
 }
 
-sub write_transpose
-{
-	my ($d, $out_file) = @_;
-	my $res = {
-		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
-		data => [ map {
-				my $name = $_;
-				{
-					"colname" => $name,
-					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
-				}
-			} @{$d->{names}} ]
-	};
-	write_tsv($res, $out_file);
-}
-
 sub write_dim
 {
 	my ($d, $out_file) = @_;
@@ -907,6 +892,35 @@ sub write_dim
 		data => [
 			{ colname => 'columns', 'value' => scalar(@{$d->{names}}) },
 			{ colname => 'rows', 'value' => scalar(@{$d->{data}}) }
+		]
+	};
+	write_tsv($res, $out_file);
+}
+
+sub write_count
+{
+	my ($d, $out_file, $col_index) = @_;
+	my @names = map { $d->{names}->[$_ - 1] } @{$col_index};
+	my %counter = ();
+	for my $i (0 .. $#{$d->{data}}) {
+		my $key = join("\t", map { $d->{data}->[$i]->{$_} } @names);
+		$counter{$key} = { index => $i, count => 0 } if not exists $counter{$key};
+		++$counter{$key}->{count};
+	}
+	my $res = {
+		names => [ "n", map { $d->{names}->[$_ - 1] } @{$col_index} ],
+		data => [
+			map {
+				my $index = $counter{$_}->{index};
+				{
+					n => $counter{$_}->{count},
+					map { $_ => $d->{data}->[$index]->{$_} } @names
+				}
+			} sort {
+				$counter{$a}->{count} <=> $counter{$b}->{count}
+				//
+				$counter{$a}->{index} <=> $counter{$b}->{index}
+			} keys(%counter)
 		]
 	};
 	write_tsv($res, $out_file);
@@ -958,6 +972,22 @@ sub expand_column_index
 	}
 }
 
+sub write_transpose
+{
+	my ($d, $out_file) = @_;
+	my $res = {
+		names => [ "colname", map { "row_" . ($_ + 1) } (0 .. $#{$d->{data}}) ],
+		data => [ map {
+				my $name = $_;
+				{
+					"colname" => $name,
+					map { "row_" . ($_ + 1) => $d->{data}->[$_]->{$name} } (0 .. $#{$d->{data}})
+				}
+			} @{$d->{names}} ]
+	};
+	write_tsv($res, $out_file);
+}
+
 ############################################################
 # version & usages
 
@@ -987,8 +1017,10 @@ Commands:
       align         align columns
       view          view file content in pretty better format
       column        list column names
-      transpose     matrix transpose
+
+  - Counting
       dim           show matrix dimension
+      count         count column values
 
   - Selecting
       select        select columns
@@ -996,9 +1028,10 @@ Commands:
       head          select head n rows
       tail          select tail n rows
       filter        filter by conditions
-      cleanup       remove empty rows or columns
 
   - Manipulating
+      cleanup       remove empty rows or columns
+      transpose     matrix transpose
       sort          sort by column(s)
       merge         merge multiple files
       join          join two tables by key column(s)
@@ -1098,6 +1131,21 @@ sub print_usage_dim
 	my ($cmd, $opts) = @_;
 	print "
 Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_count
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt> <columns>...
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
@@ -1389,28 +1437,6 @@ sub do_column
 	exit 0;
 }
 
-sub do_transpose
-{
-	my ($cmd, @args) = @_;
-
-	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
-	my $opts = {
-		'-o' => \$out_file,
-		'-s' => \$sep,
-		'--no-header' => sub { $no_header = 1; },
-	};
-	parse_args($cmd, \@args, \&print_usage_transpose, $opts, [ \$in_file ]);
-
-	if ($in_file eq '') {
-		print_usage_transpose($cmd, $opts) if -t STDIN;
-		$in_file = $STDIN;
-	}
-
-	my $d = load_tsv($in_file, $no_header, $sep);
-	write_transpose($d, $out_file);
-	exit 0;
-}
-
 sub do_dim
 {
 	my ($cmd, @args) = @_;
@@ -1430,6 +1456,37 @@ sub do_dim
 
 	my $d = load_tsv($in_file, $no_header, $sep);
 	write_dim($d, $out_file);
+	exit 0;
+}
+
+sub do_count
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	my @columns = ();
+	parse_args($cmd, \@args, \&print_usage_select, $opts, [ \$in_file ], \@columns);
+
+	if ($in_file ne '' and not -e $in_file and not -t STDIN) {
+		unshift @columns, $in_file;
+		$in_file = $STDIN;
+	}
+	print_usage_select($cmd, $opts) if $in_file eq '';
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	my %dict = map { $d->{names}->[$_] => $_ + 1 } (0 .. $#{$d->{names}});
+	my @col_index;
+	if (@columns) {
+		@col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
+	} else {
+		@col_index = (1 .. scalar(@{$d->{names}}));
+	}
+	write_count($d, $out_file, \@col_index);
 	exit 0;
 }
 
@@ -1453,7 +1510,7 @@ sub do_select
 	print_usage_select($cmd, $opts) if $in_file eq '' or not @columns;
 
 	my $d = load_tsv($in_file, $no_header, $sep);
-	my %dict = map { $_ => 1 } @{$d->{names}};
+	my %dict = map { $d->{names}->[$_] => $_ + 1 } (0 .. $#{$d->{names}});
 	my @col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
 	write_tsv($d, $out_file, { no_header => $no_header, col_index => \@col_index });
 	exit 0;
@@ -1605,6 +1662,28 @@ sub do_cleanup
 		push @col_index, $i + 1 if $has_data;
 	}
 	write_tsv($d, $STDOUT, { col_index => \@col_index, remove_na => 1 });
+	exit 0;
+}
+
+sub do_transpose
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_transpose, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_transpose($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	write_transpose($d, $out_file);
 	exit 0;
 }
 
