@@ -26,6 +26,7 @@ my $dispatcher = {
 	"filter"      => \&do_filter,
 	"cleanup"     => \&do_cleanup,
 	"transpose"   => \&do_transpose,
+	"mutate"      => \&do_mutate,
 	"sort"        => \&do_sort,
 	"merge"       => \&do_merge,
 	"join"        => \&do_join,
@@ -490,25 +491,31 @@ sub eval_filter
 		} else {
 			die "Unexpected logical operator '$cond->{op}'";
 		}
-	} else {
+	} elsif ($cond->{type} eq 'compare') {
 		my $op = $cond->{op};
-		my ($a, $a_type) = ($cond->{a}->{val}, $cond->{a}->{type});
-		$a = $item->{$a} if $a_type eq 'symbol';
-		my ($b, $b_type) = ($cond->{b}->{val}, $cond->{b}->{type});
-		$b = $item->{$b} if $b_type eq 'symbol';
+		my $a = eval_filter($cond->{a}, $item);
+		my $b = eval_filter($cond->{b}, $item);
 		if ($op eq '=~') {
 			return 0 unless ($a =~ $b);
 		} elsif ($op eq '!~') {
 			return 0 unless ($a !~ $b);
 		} else {
 			my $n;
-			if ($a_type eq 'string' or $b_type eq 'string') {
+			if ($cond->{a}->{type} eq 'string' or $cond->{b}->{type} eq 'string') {
 				$n = ($a cmp $b);
 			} else {
 				$n = ($a <=> $b);
 			}
 			return 0 unless eval($n . $cond->{op} . '0');
 		}
+	} elsif ($cond->{type} eq 'expression') {
+		my $a = eval_filter($cond->{a}, $item);
+		my $b = eval_filter($cond->{b}, $item);
+		return eval($a . $cond->{op} . $b);
+	} else {
+		my ($val, $type) = ($cond->{val}, $cond->{type});
+		$val = $item->{$val} if $type eq 'symbol';
+		return $val;
 	}
 }
 
@@ -1154,6 +1161,23 @@ sub write_transpose
 	write_tsv($res, $out_file);
 }
 
+sub run_calc
+{
+	my ($item, $calc) = @_;
+	my ($name, $exp) = ($calc->{var}, $calc->{exp});
+	$item->{$name} = eval_filter($exp, $item);
+}
+
+sub build_calculator
+{
+	my ($s, $names) = @_;
+	die "Error: Invalid statment '$s'" if $s !~ /^\s*(\w+)\s*=\s*(.+)$/;
+	my ($var, $exp) = ($1, $2);
+	my $p = { s => $exp, size => length($exp), pos => 0 };
+	read_next($p);
+	return { var => $var, exp => parse_expression($p, $names) };
+}
+
 ############################################################
 # version & usages
 
@@ -1195,9 +1219,12 @@ Commands:
       tail          select tail n rows
       filter        filter by conditions
 
-  - Manipulating
+  - Editing
       cleanup       remove empty rows or columns
       transpose     matrix transpose
+      mutate        add/update column valies
+
+  - Manipulating
       sort          sort by column(s)
       merge         merge multiple files
       join          join two tables by key column(s)
@@ -1424,6 +1451,24 @@ Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
    -s <CHAR>     Separate character, default: <TAB>
    --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_mutate
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt> <name=expression>...
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+Example:
+   $cmd_prefix$cmd in.txt new=old+2
 
 ";
 	exit 1;
@@ -1878,6 +1923,41 @@ sub do_cleanup
 		push @col_index, $i + 1 if $has_data;
 	}
 	write_tsv($d, $STDOUT, { col_index => \@col_index, remove_na => 1 });
+	exit 0;
+}
+
+sub do_mutate
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	my @statements = ();
+	parse_args($cmd, \@args, \&print_usage_mutate, $opts, [ \$in_file ], \@statements);
+
+	if ($in_file eq '') {
+		print_usage_mutate($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	my %names = map { $_ => 1 } @{$d->{names}};
+	my @calculator = map { build_calculator($_, \%names) } @statements;
+	for my $item (@{$d->{data}}) {
+		for my $calc (@calculator) {
+			my $name = $calc->{var};
+			if (not exists $names{$name}) {
+				push @{$d->{names}}, $name;
+				$names{$name} = 1;
+			}
+			run_calc($item, $calc);
+		}
+	}
+	write_tsv($d, $out_file);
 	exit 0;
 }
 
