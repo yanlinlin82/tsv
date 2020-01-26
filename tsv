@@ -131,16 +131,6 @@ sub parse_args
 ############################################################
 # data frame manipulating
 
-sub tsv_fetch_row
-{
-	my $d = shift @_;
-	$d->{current_row} = 0 unless exists $d->{current_row};
-	if ($d->{current_row} <= $#{$d->{data}}) {
-		return $d->{data}->[$d->{current_row}++];
-	}
-	return undef;
-}
-
 sub build_sorter
 {
 	my ($columns, $names) = @_;
@@ -629,6 +619,7 @@ sub write_tsv
 	my $no_header = $opts->{no_header} // 0;
 	my $col_index = $opts->{col_index};
 	my $show_row_numbers = $opts->{show_row_numbers} // 0;
+	my $mode = $opts->{mode} // 'cat';
 	my @names;
 	if (not exists $opts->{col_index}) {
 		@names = @{$d->{names}};
@@ -636,8 +627,10 @@ sub write_tsv
 		@names = map { $d->{names}->[$_ - 1] } @{$opts->{col_index}};
 	}
 	open my $fh, ">", $out_file or die "Error: Can not write to file '$out_file'";
-	print $fh "\t" if $show_row_numbers;
-	print $fh join($sep, @names), "\n" unless $no_header;
+	if (not $no_header and $mode ne 'view') {
+		print $fh "\t" if $show_row_numbers;
+		print $fh join($sep, @names), "\n";
+	}
 	if (exists $opts->{row_index}) {
 		for my $r (@{$opts->{row_index}}) {
 			my ($a, $b) = ($r->{start}, $r->{end});
@@ -652,13 +645,38 @@ sub write_tsv
 		for my $i (@rows) {
 			print $fh join($sep, map { $d->{data}->[$i]->{$_} // '' } @names), "\n";
 		}
+	} elsif ($mode eq 'view') {
+		my $max_name_width = length('column');
+		my $names = $d->{names};
+		my $id_width = get_text_width(scalar(@{$names}) - 1);
+		my $max_id_width = ($id_width >= length('id') ? $id_width : length('id'));
+		for my $name (@{$names}) {
+			my $width = get_text_width($name);
+			$max_name_width = $width if $max_name_width < $width;
+		}
+		my $row = 0;
+		for my $item (@{$d->{data}}) {
+			print $fh "# row " . ++$row . "\n";
+			print $fh join("  ",
+				align_text('id', $max_id_width),
+				align_text('column', $max_name_width),
+				'value'), "\n";
+			my $column_id = 0;
+			for my $name (@{$names}) {
+				print $fh join("  ",
+					align_text(++$column_id, $max_id_width),
+					align_text($name, $max_name_width),
+					$item->{$name}), "\n";
+			}
+			print $fh "\n";
+		}
 	} else {
-		my $row_number = 0;
-		while (my $item = tsv_fetch_row($d)) {
-			++$row_number;
+		my $row = 0;
+		for my $item (@{$d->{data}}) {
+			++$row;
 			next if exists $opts->{filter} and not check_filter_ok($item, $opts->{filter});
 			next if exists $opts->{remove_na} and has_na($item, \@names);
-			print $fh $row_number, "\t" if $show_row_numbers;
+			print $fh $row, "\t" if $show_row_numbers;
 			print $fh join($sep, map { $item->{$_} // '' } (@names)), "\n";
 		}
 	}
@@ -840,31 +858,7 @@ sub write_view
 {
 	my ($d, $out_file) = @_;
 	open my $ofh, '>', $out_file or die "Error: Can not create file '$out_file'";
-	my $max_name_width = length('column');
-	my $names = $d->{names};
-	my $id_width = get_text_width(scalar(@{$names}) - 1);
-	my $max_id_width = ($id_width >= length('id') ? $id_width : length('id'));
-	for my $name (@{$names}) {
-		my $width = get_text_width($name);
-		$max_name_width = $width if $max_name_width < $width;
-	}
-	my $row = 0;
-	while (my $item = tsv_fetch_row($d)) {
-		print $ofh "# row " . ++$row . "\n";
-		print $ofh join("  ",
-			align_text('id', $max_id_width),
-			align_text('column', $max_name_width),
-			'value'), "\n";
-		my $column_id = 0;
-		for my $name (@{$names}) {
-			print $ofh join("  ",
-				align_text(++$column_id, $max_id_width),
-				align_text($name, $max_name_width),
-				$item->{$name}), "\n";
-		}
-		print $ofh "\n";
-	}
-	close $ofh;
+	write_tsv($d, $out_file, { mode => 'view' });
 }
 
 sub write_column
