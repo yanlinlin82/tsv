@@ -26,22 +26,37 @@ chmod +x tsv
 ## Supported Functions
 
 ```
-  align      align columns
-  cat        show file content
-  column     list columns
-  filter     filter by conditions
-  head       fetch head n rows
-  join       join two tables by key column(s)
-  merge      merge multiple files
-  select     select columns
-  sort       sort by column(s)
-  subset     select rows (subset)
-  summary    summary each column
-  tail       fetch tail n rows
-  to-excel   write to Excel (.xlsx) file
-  transpose  matrix transpose
-  version    show program version
-  view       show file content, alias to 'cat'
+- Viewing
+    cat           show original content
+    align         align columns
+    view          view file content in pretty better format
+    column        list column names
+
+- Counting
+    dim           show matrix dimension
+    count         count column values
+
+- Selecting
+    select        select columns
+    select-rows   select rows
+    head          select head n rows
+    tail          select tail n rows
+    filter        filter by conditions
+
+- Manipulating
+    cleanup       remove empty rows or columns
+    transpose     matrix transpose
+    sort          sort by column(s)
+    merge         merge multiple files
+    join          join two tables by key column(s)
+    summary       summary each column
+
+- Writing
+    to-csv        write to CSV file
+    to-excel      write to Excel (.xlsx) file
+
+- Others
+    version       show program version
 ```
 
 ## Data Source
