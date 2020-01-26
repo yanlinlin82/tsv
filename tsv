@@ -173,16 +173,6 @@ sub build_sorter
 	};
 }
 
-sub tsv_sort
-{
-	my ($d, $column_count) = @_;
-	my $max_column_count = scalar(@{$d->{data}});
-	$column_count = 1 if $column_count < 1;
-	$column_count = $max_column_count if $column_count > $max_column_count;
-	my $column = $d->{names}->[$column_count - 1];
-	@{$d->{data}} = sort { ($a->{$column} // '') cmp ($b->{$column} // '') } @{$d->{data}};
-}
-
 sub join_tsv
 {
 	my ($d1, $d2, $keys, $join_type) = @_;
@@ -813,20 +803,6 @@ sub mean
 		}
 		return $sum / scalar(@{$data});
 	}
-}
-
-sub calc_summary
-{
-	my ($data, $name, $summary_fields) = @_;
-	my @values = sort { $a <=> $b } map { $_->{$name} } @{$data};
-	return {
-		$summary_fields->[0] => $values[0],              # "Min."
-		$summary_fields->[1] => quantile(\@values, .25), # "1st Qu."
-		$summary_fields->[2] => quantile(\@values, .5),  # "Median"
-		$summary_fields->[3] => mean(\@values),          # "Mean"
-		$summary_fields->[4] => quantile(\@values, .75), # "3rd Qu."
-		$summary_fields->[5] => $values[$#values],       # "Max."
-	};
 }
 
 sub write_align
@@ -1510,13 +1486,13 @@ sub do_count
 		'--no-header' => sub { $no_header = 1; },
 	};
 	my @columns = ();
-	parse_args($cmd, \@args, \&print_usage_select, $opts, [ \$in_file ], \@columns);
+	parse_args($cmd, \@args, \&print_usage_count, $opts, [ \$in_file ], \@columns);
 
 	if ($in_file ne '' and not -e $in_file and not -t STDIN) {
 		unshift @columns, $in_file;
 		$in_file = $STDIN;
 	}
-	print_usage_select($cmd, $opts) if $in_file eq '';
+	print_usage_count($cmd, $opts) if $in_file eq '';
 
 	my $d = load_tsv($in_file, $no_header, $sep);
 	my %dict = map { $d->{names}->[$_] => $_ + 1 } (0 .. $#{$d->{names}});
