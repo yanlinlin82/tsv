@@ -32,10 +32,6 @@ chmod +x tsv
     view          view file content in pretty better format
     column        list column names
 
-- Counting
-    dim           show matrix dimension
-    count         count column values
-
 - Selecting
     select        select columns
     select-rows   select rows
@@ -52,6 +48,10 @@ chmod +x tsv
     sort          sort by column(s)
     merge         merge multiple files
     join          join two tables by key column(s)
+
+- Counting
+    dim           show matrix dimension
+    count         count column values
     summary       summary each column
 
 - Writing

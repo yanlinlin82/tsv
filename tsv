@@ -17,8 +17,6 @@ my $dispatcher = {
 	"align"       => \&do_align,
 	"view"        => \&do_view,
 	"column"      => \&do_column,
-	"dim"         => \&do_dim,
-	"count"       => \&do_count,
 	"select"      => \&do_select,
 	"select-rows" => \&do_select_rows,
 	"head"        => \&do_head,
@@ -30,6 +28,8 @@ my $dispatcher = {
 	"sort"        => \&do_sort,
 	"merge"       => \&do_merge,
 	"join"        => \&do_join,
+	"dim"         => \&do_dim,
+	"count"       => \&do_count,
 	"summary"     => \&do_summary,
 	"to-csv"      => \&do_to_csv,
 	"to-xlsx"     => \&do_to_xlsx,
@@ -1208,10 +1208,6 @@ Commands:
       view          view file content in pretty better format
       column        list column names
 
-  - Counting
-      dim           show matrix dimension
-      count         count column values
-
   - Selecting
       select        select columns
       select-rows   select rows
@@ -1228,6 +1224,10 @@ Commands:
       sort          sort by column(s)
       merge         merge multiple files
       join          join two tables by key column(s)
+
+  - Counting
+      dim           show matrix dimension
+      count         count column values
       summary       summary each column
 
   - Writing
@@ -1294,36 +1294,6 @@ sub print_usage_column
 	my ($cmd, $opts) = @_;
 	print "
 Usage: $cmd_prefix$cmd [options] <in.txt>
-
-Options:
-   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
-   -s <CHAR>     Separate character, default: <TAB>
-   --no-header   Input file does not have header line
-
-";
-	exit 1;
-}
-
-sub print_usage_dim
-{
-	my ($cmd, $opts) = @_;
-	print "
-Usage: $cmd_prefix$cmd [options] <in.txt>
-
-Options:
-   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
-   -s <CHAR>     Separate character, default: <TAB>
-   --no-header   Input file does not have header line
-
-";
-	exit 1;
-}
-
-sub print_usage_count
-{
-	my ($cmd, $opts) = @_;
-	print "
-Usage: $cmd_prefix$cmd [options] <in.txt> <columns>...
 
 Options:
    -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
@@ -1553,6 +1523,36 @@ Options:
 	exit 1;
 }
 
+sub print_usage_dim
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_count
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt> <columns>...
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
 sub print_usage_summary
 {
 	my ($cmd, $opts) = @_;
@@ -1695,59 +1695,6 @@ sub do_column
 
 	my $d = load_tsv($in_file, $no_header, $sep);
 	write_column($d, $out_file);
-	exit 0;
-}
-
-sub do_dim
-{
-	my ($cmd, @args) = @_;
-
-	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
-	my $opts = {
-		'-o' => \$out_file,
-		'-s' => \$sep,
-		'--no-header' => sub { $no_header = 1; },
-	};
-	parse_args($cmd, \@args, \&print_usage_dim, $opts, [ \$in_file ]);
-
-	if ($in_file eq '') {
-		print_usage_dim($cmd, $opts) if -t STDIN;
-		$in_file = $STDIN;
-	}
-
-	my $d = load_tsv($in_file, $no_header, $sep);
-	write_dim($d, $out_file);
-	exit 0;
-}
-
-sub do_count
-{
-	my ($cmd, @args) = @_;
-
-	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
-	my $opts = {
-		'-o' => \$out_file,
-		'-s' => \$sep,
-		'--no-header' => sub { $no_header = 1; },
-	};
-	my @columns = ();
-	parse_args($cmd, \@args, \&print_usage_count, $opts, [ \$in_file ], \@columns);
-
-	if ($in_file ne '' and not -e $in_file and not -t STDIN) {
-		unshift @columns, $in_file;
-		$in_file = $STDIN;
-	}
-	print_usage_count($cmd, $opts) if $in_file eq '';
-
-	my $d = load_tsv($in_file, $no_header, $sep);
-	my %dict = map { $d->{names}->[$_] => $_ + 1 } (0 .. $#{$d->{names}});
-	my @col_index;
-	if (@columns) {
-		@col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
-	} else {
-		@col_index = (1 .. scalar(@{$d->{names}}));
-	}
-	write_count($d, $out_file, \@col_index);
 	exit 0;
 }
 
@@ -2097,6 +2044,59 @@ sub do_join
 	}
 	my $d = join_tsv($d1, $d2, \@keys, $join_type);
 	write_tsv($d, $out_file);
+	exit 0;
+}
+
+sub do_dim
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_dim, $opts, [ \$in_file ]);
+
+	if ($in_file eq '') {
+		print_usage_dim($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
+	}
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	write_dim($d, $out_file);
+	exit 0;
+}
+
+sub do_count
+{
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	my @columns = ();
+	parse_args($cmd, \@args, \&print_usage_count, $opts, [ \$in_file ], \@columns);
+
+	if ($in_file ne '' and not -e $in_file and not -t STDIN) {
+		unshift @columns, $in_file;
+		$in_file = $STDIN;
+	}
+	print_usage_count($cmd, $opts) if $in_file eq '';
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	my %dict = map { $d->{names}->[$_] => $_ + 1 } (0 .. $#{$d->{names}});
+	my @col_index;
+	if (@columns) {
+		@col_index = map { expand_column_index($_, \%dict, $d->{names}, 1) } (@columns);
+	} else {
+		@col_index = (1 .. scalar(@{$d->{names}}));
+	}
+	write_count($d, $out_file, \@col_index);
 	exit 0;
 }
 
