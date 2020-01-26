@@ -261,49 +261,241 @@ sub is_numeric
 	return do { no warnings; $val eq ($val + 0) };
 }
 
-sub parse_cond_obj
+sub read_next
 {
-	my ($s, $names) = @_;
-	$s =~ s/(^\s*|\s*$)//g;
-	if ($s =~ /^[0-9]/) {
-		return (eval($s), 'number');
-	} elsif ($s =~ /^["']/) {
-		return (eval($s), 'string');
-	} else {
-		die "Error: No column '$s' found" if not exists $names->{$s};
-		return ($s, 'var');
+	my $cond = shift;
+	my ($s, $size, $pos) = ($cond->{s}, $cond->{size}, $cond->{pos});
+	my $c = substr($s, $pos, 1);
+	while ($pos < $size) { # skip spaces
+		last if $c ne ' ' and $c ne "\t";
+		$c = substr($s, ++$pos, 1);
 	}
+	if ($pos >= $size) {
+		($cond->{pos}, $cond->{token}, $cond->{type}) = ($pos, '', '');
+		return;
+	}
+	if ($c eq '"' or $c eq "'") { # string
+		my ($quote, $token) = ($c, '');
+		while ($pos < $size) {
+			$c = substr($s, ++$pos, 1);
+			if ($c eq $quote) {
+				$c = substr($s, ++$pos, 1);
+				($cond->{pos}, $cond->{token}, $cond->{type}) = ($pos, $token, 'string');
+				return;
+			} elsif ($c eq '\\') {
+				$c = substr($s, ++$pos, 1);
+				if ($c eq 'n') { $token .= "\n"; }
+				elsif ($c eq 'r') { $token .= "\r"; }
+				elsif ($c eq 't') { $token .= "\t"; }
+				else { $token .= $c; }
+			} else {
+				$token .= $c;
+			}
+		}
+		die "Error: Truncated string '$s'" if $pos >= $size;
+	} elsif ($c eq '.' or ($c ge '0' and $c le '9')) { # number
+		my $token = $c;
+		while ($pos < $size) {
+			$c = substr($s, ++$pos, 1);
+			if ($c eq '.' or ($c ge '0' and $c le '9') or ($c ge 'A' and $c le 'Z') or ($c ge 'a' and $c le 'z')) {
+				$token .= $c;
+			} else {
+				last;
+			}
+		}
+		($cond->{pos}, $cond->{token}, $cond->{type}) = ($pos, $token, 'number');
+		return;
+	} elsif ($c eq '_' or ($c ge 'A' and $c le 'Z') or ($c ge 'a' and $c le 'z')) {
+		my $token = $c;
+		while ($pos < $size) {
+			$c = substr($s, ++$pos, 1);
+			if ($c eq '_' or ($c ge '0' and $c le '9') or ($c ge 'A' and $c le 'Z') or ($c ge 'a' and $c le 'z')) {
+				$token .= $c;
+			} else {
+				last;
+			}
+		}
+		($cond->{pos}, $cond->{token}, $cond->{type}) = ($pos, $token, 'symbol');
+		return;
+	} else {
+		my @op = ('(', ')', '+', '-', '*', '/', '%', '=~', '!~', '==', '!=', '>=', '>', '<=', '<', '&&', '||', '!');
+		for my $op (@op) {
+			if (substr($s, $pos, length($op)) eq $op) {
+				($cond->{pos}, $cond->{token}, $cond->{type}) = ($pos + length($op), $op, 'op');
+				return;
+			}
+		}
+		die "Error: Unexpected character";
+	}
+}
+
+sub die_with
+{
+	my ($cond, $msg) = @_;
+	my $token_size = length($cond->{token});
+	my $space_size = $cond->{pos} - $token_size;
+	my $arrow_size = ($token_size <= 1 ? 1 : $token_size);
+	die ($msg . " at\n" .
+		"   " . $cond->{s} . "\n" .
+		"   " . (' ' x $space_size) . ('^' x $arrow_size) . "--(token='$cond->{token}', type='$cond->{type}')\n" .
+		"error");
+}
+
+sub parse_value
+{
+	my ($cond, $names) = @_;
+	my ($token, $type) = ($cond->{token}, $cond->{type});
+	if ($token eq '(') {
+		read_next($cond);
+		$a = parse_or_expression($cond, $names);
+		die_with $cond, "Error: Missing ')'" if $cond->{token} ne ')';
+		read_next($cond);
+		return $a;
+	} elsif ($type eq 'string' or $type eq 'number') {
+		read_next($cond);
+		return { val => $token, type => $type };
+	} elsif ($type eq 'symbol') {
+		die_with $cond, "Error: Unknown variable '$token'" if not exists $names->{$token};
+		read_next($cond);
+		return { val => $token, type => $type };
+	} else {
+		die_with $cond, "Error: Unexpected token '$token'";
+	}
+}
+
+sub parse_factor
+{
+	my ($cond, $names) = @_;
+	my $a = parse_value($cond, $names);
+	while ($cond->{token}) {
+		my $op = $cond->{token};
+		last unless ($op eq '+' or $op eq '-');
+		read_next($cond);
+		my $b = parse_value($cond, $names);
+		$a = { type => 'expression', a => $a, op => $op, b => $b };
+	}
+	return $a;
+}
+
+sub parse_item
+{
+	my ($cond, $names) = @_;
+	my $a = parse_factor($cond, $names);
+	while ($cond->{token}) {
+		my $op = $cond->{token};
+		last unless ($op eq '*' or $op eq '/' or $op eq '%');
+		read_next($cond);
+		my $b = parse_factor($cond, $names);
+		$a = { type => 'expression', a => $a, op => $op, b => $b };
+	}
+	return $a;
+}
+
+sub parse_expression
+{
+	my ($cond, $names) = @_;
+	my $a = parse_item($cond, $names);
+	while ($cond->{token}) {
+		my $op = $cond->{token};
+		last unless ($op eq '*' or $op eq '/' or $op eq '%');
+		read_next($cond);
+		my $b = parse_item($cond, $names);
+		$a = { type => 'expression', a => $a, op => $op, b => $b };
+	}
+	return $a;
+}
+
+sub parse_condition
+{
+	my ($cond, $names) = @_;
+	my $a = parse_expression($cond, $names);
+	while ($cond->{token}) {
+		my $op = $cond->{token};
+		last unless ($op eq '==' or $op eq '!=' or $op eq '=~' or $op eq '!~'
+				or $op eq '<=' or $op eq '<' or $op eq '>=' or $op eq '>');
+		read_next($cond);
+		my $b = parse_expression($cond, $names);
+		$a = { type => 'compare', a => $a, op => $op, b => $b };
+	}
+	return $a;
+}
+
+sub parse_not_expression
+{
+	my ($cond, $names) = @_;
+	my $a;
+	if ($cond->{token} eq '!') {
+		read_next($cond);
+		$a = parse_condition($cond, $names);
+		$a = { type => 'logical', a => $a, op => '!' };
+	} else {
+		$a = parse_condition($cond, $names);
+	}
+	return $a;
+}
+
+sub parse_and_expression
+{
+	my ($cond, $names) = @_;
+	my $a = parse_not_expression($cond, $names);
+	while ($cond->{token}) {
+		last unless $cond->{token} eq '&&';
+		read_next($cond);
+		my $b = parse_not_expression($cond, $names);
+		$a = { type => 'logical', a => $a, op => '&&', b => $b };
+	}
+	return $a;
+}
+
+sub parse_or_expression
+{
+	my ($cond, $names) = @_;
+	my $a = parse_and_expression($cond, $names);
+	while ($cond->{token}) {
+		last unless $cond->{token} eq '||';
+		read_next($cond);
+		my $b = parse_and_expression($cond, $names);
+		$a = { type => 'logical', a => $a, op => '||', b => $b };
+	}
+	return $a;
 }
 
 sub build_filter
 {
 	my ($conditions, $names) = @_;
 	my @filter = ();
-	for my $cond (@{$conditions}) {
-		die "Error: Invalid condition '$cond'" if $cond !~ /^(.+)(==|!=|<=?|>=?|=~|!~)(.+)$/;
-		my ($a, $op, $b) = ($1, $2, $3);
-		my ($a_type, $b_type);
-		($a, $a_type) = parse_cond_obj($a, $names);
-		($b, $b_type) = parse_cond_obj($b, $names);
-		die "Error: No column is specified in condition '$cond'" if $a_type ne 'var' and $b_type ne 'var';
-		push @filter, {
-			a => { val => $a, type => $a_type },
-			op => $op,
-			b => { val => $b, type => $b_type }
-		};
+	for my $s (@{$conditions}) {
+		my $cond = { s => $s, size => length($s), pos => 0 };
+		read_next($cond);
+		push @filter, parse_or_expression($cond, $names);
+		die_with $cond, "Error: Unexpected character in expression" if $cond->{token} ne '';
 	}
+	#print Dumper \@filter;
 	return \@filter;
 }
 
-sub check_filter_ok
+sub eval_filter
 {
-	my ($item, $filter) = @_;
-	for my $cond (@{$filter}) {
+	my ($cond, $item) = @_;
+	if ($cond->{type} eq 'logical') {
+		my $ret = eval_filter($cond->{a}, $item);
+		if ($cond->{op} eq '&&') {
+			return 0 if not $ret;
+			return eval_filter($cond->{b}, $item);
+		} elsif ($cond->{op} eq '||') {
+			return 1 if $ret;
+			return eval_filter($cond->{b}, $item);
+		} elsif ($cond->{op} eq '!') {
+			return ($ret ? 0 : 1);
+		} else {
+			die "Unexpected logical operator '$cond->{op}'";
+		}
+	} else {
 		my $op = $cond->{op};
 		my ($a, $a_type) = ($cond->{a}->{val}, $cond->{a}->{type});
-		$a = $item->{$a} if $a_type eq 'var';
+		$a = $item->{$a} if $a_type eq 'symbol';
 		my ($b, $b_type) = ($cond->{b}->{val}, $cond->{b}->{type});
-		$b = $item->{$b} if $b_type eq 'var';
+		$b = $item->{$b} if $b_type eq 'symbol';
 		if ($op eq '=~') {
 			return 0 unless ($a =~ $b);
 		} elsif ($op eq '!~') {
@@ -317,6 +509,14 @@ sub check_filter_ok
 			}
 			return 0 unless eval($n . $cond->{op} . '0');
 		}
+	}
+}
+
+sub check_filter_ok
+{
+	my ($item, $filter) = @_;
+	for my $cond (@{$filter}) {
+		return 0 if not eval_filter($cond, $item);
 	}
 	return 1;
 }
