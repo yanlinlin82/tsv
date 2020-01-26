@@ -29,7 +29,7 @@ my $dispatcher = {
 	"sort"        => \&do_sort,
 	"merge"       => \&do_merge,
 	"join"        => \&do_join,
-	"summary"     => \&do_tsv_summary,
+	"summary"     => \&do_summary,
 	"to-csv"      => \&do_to_csv,
 	"to-excel"    => \&do_tsv_to_excel,
 	"version"     => \&do_version,
@@ -1338,6 +1338,21 @@ Options:
 	exit 1;
 }
 
+sub print_usage_summary
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
 sub print_usage_to_csv
 {
 	my ($cmd, $opts) = @_;
@@ -1816,35 +1831,57 @@ sub do_join
 	exit 0;
 }
 
-sub do_tsv_summary
+sub do_summary
 {
-	my $in_file;
-	if (scalar(@ARGV) >= 1) {
-		$in_file = shift @ARGV;
-	} elsif (not -t STDIN) {
-		$in_file = $STDIN;
-	} else {
-		print "Usage: $cmd_prefix$cmd <in.txt>\n";
-		exit 1;
-	}
-	my $d = load_tsv($in_file);
-	my %results = ();
-	my @summary_fields = ("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.");
-	for my $name (@{$d->{names}}) {
-		$results{$name} = calc_summary($d->{data}, $name, \@summary_fields);
-	}
-	my $summary = {
-		names => [ "stat_name", @{$d->{names}} ],
-		data => [ ]
+	my ($cmd, @args) = @_;
+
+	my ($in_file, $no_header, $out_file, $sep) = ('', 0, $STDOUT, "\t");
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
 	};
-	for my $stat_name (@summary_fields) {
-		my %item = ( stat_name => $stat_name );
-		for my $name (@{$d->{names}}) {
-			$item{$name} = $results{$name}->{$stat_name};
-		}
-		push @{$summary->{data}}, \%item;
+	my @columns = ();
+	parse_args($cmd, \@args, \&print_usage_summary, $opts, [ \$in_file ], \@columns);
+
+	if ($in_file eq '') {
+		print_usage_summary($cmd, $opts) if -t STDIN;
+		$in_file = $STDIN;
 	}
-	write_tsv($summary, $STDOUT);
+
+	my $d = load_tsv($in_file, $no_header, $sep);
+	my $ret = {
+		names => [ "number", "colname", "type",
+			"count", "na_count",
+			"min", "q1", "median", "mean", "q3", "max" ],
+		data => [
+			map {
+				my $name = $d->{names}->[$_];
+				my $type = 'number';
+				my $count = 0;
+				my $na_count = 0;
+				for my $item (@{$d->{data}}) {
+					++$count;
+					++$na_count if ($item->{$name} // '') eq '';
+					$type = 'string' if not is_numeric($item->{$name});
+				}
+				my $item = {
+					number => $_ + 1, colname => $name, type => $type,
+					count => $count, na_count => $na_count,
+				};
+				if ($type eq 'number') {
+					my @values = sort { $a <=> $b } map { $_->{$name} } @{$d->{data}};
+					$item->{min} = $values[0];
+					$item->{q1} = quantile(\@values, .25);
+					$item->{median} = quantile(\@values, .5);
+					$item->{mean} = mean(\@values);
+					$item->{q3} = quantile(\@values, .75);
+					$item->{max} = $values[$#values];
+				}
+				$item;
+			} (0 .. $#{$d->{names}}) ],
+	};
+	write_tsv($ret, $out_file);
 	exit 0;
 }
 
