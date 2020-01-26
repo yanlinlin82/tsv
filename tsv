@@ -31,7 +31,7 @@ my $dispatcher = {
 	"join"        => \&do_join,
 	"summary"     => \&do_summary,
 	"to-csv"      => \&do_to_csv,
-	"to-excel"    => \&do_to_excel,
+	"to-xlsx"     => \&do_to_xlsx,
 	"version"     => \&do_version,
 };
 
@@ -396,15 +396,15 @@ sub load_xlsx
 	}
 	$sheet_no{1} = 1 unless %sheet_no; # load only the first sheet by default
 
-	my $excel = Spreadsheet::XLSX->new($filename);
-	if (not defined $excel) {
-		print STDERR "Error: Can not open Excel file '$filename'. " . $excel->error() . ".\n";
+	my $xlsx = Spreadsheet::XLSX->new($filename);
+	if (not defined $xlsx) {
+		print STDERR "Error: Can not open Excel file '$filename'. " . $xlsx->error() . ".\n";
 		exit 1;
 	}
 
 	my $counter = 0;
 	my $d;
-	for my $sheet (@{$excel->{Worksheet}}) {
+	for my $sheet (@{$xlsx->{Worksheet}}) {
 		my @names = ();
 		my %hash = ();
 		my @data = ();
@@ -1035,7 +1035,7 @@ Commands:
 
   - Writing
       to-csv        write to CSV file
-      to-excel      write to Excel (.xlsx) file
+      to-xlsx       write to Excel (.xlsx) file
 
   - Others
       version       show program version
@@ -1368,7 +1368,7 @@ Options:
 	exit 1;
 }
 
-sub print_usage_to_excel
+sub print_usage_to_xlsx
 {
 	my ($cmd, $opts) = @_;
 	print "
@@ -1926,7 +1926,7 @@ sub do_to_csv
 	exit 0;
 }
 
-sub do_to_excel
+sub do_to_xlsx
 {
 	eval("use Encode");
 	die "Error: Perl module 'Encode' should be installed!" if $@;
@@ -1941,10 +1941,10 @@ sub do_to_excel
 		'-s' => \$sep,
 		'--no-header' => sub { $no_header = 1; },
 	};
-	parse_args($cmd, \@args, \&print_usage_to_excel, $opts, [ \$out_file ], \@in_files);
+	parse_args($cmd, \@args, \&print_usage_to_xlsx, $opts, [ \$out_file ], \@in_files);
 
 	if (not @in_files) {
-		print_usage_to_excel($cmd, $opts) if -t STDIN;
+		print_usage_to_xlsx($cmd, $opts) if -t STDIN;
 		push @in_files, $STDIN;
 	}
 
@@ -1952,7 +1952,7 @@ sub do_to_excel
 		print "Warning: output Excel filename should be the first parameter!\n";
 		exit 1;
 	}
-	my $excel = Excel::Writer::XLSX->new($out_file);
+	my $xlsx = Excel::Writer::XLSX->new($out_file);
 
 	for my $arg (@in_files) {
 		my $in_tsv = $arg;
@@ -1964,19 +1964,19 @@ sub do_to_excel
 			$name =~ s/^.*\///g;
 			$name =~ s/\.[^\.]+$//;
 		}
-		my $worksheet = $excel->add_worksheet(decode("utf8", $name));
+		my $worksheet = $xlsx->add_worksheet(decode("utf8", $name));
 		$worksheet->add_write_handler(qr[\w], \&store_string_widths);
 
 		my $d = load_tsv($in_tsv);
 
-		my $format = $excel->add_format( bold => 1, bg_color => '#dddddd', align => 'center', border => 1 );
+		my $format = $xlsx->add_format( bold => 1, bg_color => '#dddddd', align => 'center', border => 1 );
 		my ($row, $col) = (0, 0);
 		for my $name (@{$d->{names}}) {
 			$worksheet->write($row, $col++, decode("utf8", $name), $format);
 		}
 
 		$worksheet->freeze_panes(1, 0); # Freeze the first row
-		$format = $excel->add_format( border => 1 );
+		$format = $xlsx->add_format( border => 1 );
 		for my $item (@{$d->{data}}) {
 			$row++;
 			$col = 0;
