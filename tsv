@@ -31,7 +31,7 @@ my $dispatcher = {
 	"join"        => \&do_join,
 	"summary"     => \&do_summary,
 	"to-csv"      => \&do_to_csv,
-	"to-excel"    => \&do_tsv_to_excel,
+	"to-excel"    => \&do_to_excel,
 	"version"     => \&do_version,
 };
 
@@ -1368,6 +1368,25 @@ Options:
 	exit 1;
 }
 
+sub print_usage_to_excel
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] [out.xlsx] <in.txt>...
+
+Options:
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+Notes:
+  1. For multiple input file, each file will be written into a sheet.
+  2. Input file could be specified as 'NAME=filename' to set sheet name.
+     e.g.:  $cmd_prefix$cmd out.xlsx Index=index.txt Details=details.txt
+
+";
+	exit 1;
+}
+
 ############################################################
 # commands
 
@@ -1907,25 +1926,35 @@ sub do_to_csv
 	exit 0;
 }
 
-sub do_tsv_to_excel
+sub do_to_excel
 {
 	eval("use Encode");
 	die "Error: Perl module 'Encode' should be installed!" if $@;
 	eval("use Excel::Writer::XLSX");
 	die "Error: Perl module 'Excel::Writer::XLSX' should be installed!" if $@;
 
-	if (scalar @ARGV < 2) {
-		print "Usage: $cmd_prefix$cmd <out.xlsx> <in.tsv>...\n";
-		exit 1;
+	my ($cmd, @args) = @_;
+
+	my ($no_header, $out_file, $sep) = (0, '', "\t");
+	my @in_files = ();
+	my $opts = {
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+	};
+	parse_args($cmd, \@args, \&print_usage_to_excel, $opts, [ \$out_file ], \@in_files);
+
+	if (not @in_files) {
+		print_usage_to_excel($cmd, $opts) if -t STDIN;
+		push @in_files, $STDIN;
 	}
-	my $out_xlsx = shift @ARGV;
-	if (-e $out_xlsx and $out_xlsx !~ /\.xlsx$/) {
+
+	if (-e $out_file and $out_file !~ /\.xlsx$/) {
 		print "Warning: output Excel filename should be the first parameter!\n";
 		exit 1;
 	}
-	my $excel = Excel::Writer::XLSX->new($out_xlsx);
+	my $excel = Excel::Writer::XLSX->new($out_file);
 
-	for my $arg (@ARGV) {
+	for my $arg (@in_files) {
 		my $in_tsv = $arg;
 		my $name;
 		if (not -e $in_tsv and $arg =~ /^(.+)=(.+)$/) {
