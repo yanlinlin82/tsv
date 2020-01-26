@@ -28,7 +28,7 @@ my $dispatcher = {
 	"transpose"   => \&do_transpose,
 	"sort"        => \&do_sort,
 	"merge"       => \&do_merge,
-	"join"        => \&do_tsv_join,
+	"join"        => \&do_join,
 	"summary"     => \&do_tsv_summary,
 	"to-csv"      => \&do_to_csv,
 	"to-excel"    => \&do_tsv_to_excel,
@@ -193,88 +193,86 @@ sub tsv_sort
 	@{$d->{data}} = sort { ($a->{$column} // '') cmp ($b->{$column} // '') } @{$d->{data}};
 }
 
-sub prepare_join_header
-{
-	my ($tsv1, $tsv2, $column) = @_;
-	my %h1 = map { $tsv1->{names}->[$_] => $_ } (0 .. $#{$tsv1->{names}});
-	my %h2 = map { $tsv2->{names}->[$_] => $_ } (0 .. $#{$tsv2->{names}});
-	die "Error: column '$column' does not exist in left table" unless exists $h1{$column};
-	die "Error: column '$column' does not exist in right table" unless exists $h2{$column};
-	my @header = ();
-	push @header, { TSV => "left", name => $column, index => $column };
-	for my $name (@{$tsv1->{names}}) {
-		if ($name ne $column) {
-			push @header, {
-				TSV => "left",
-				name => $name . (exists $h2{$name} ? ".x" : ''),
-				index => $name
-			};
-		}
-	}
-	for my $name (@{$tsv2->{names}}) {
-		if ($name ne $column) {
-			push @header, {
-				TSV => "right",
-				name => $name . (exists $h1{$name} ? ".y" : ''),
-				index => $name
-			};
-		}
-	}
-	return \@header;
-}
-
-sub prepare_join_hash
-{
-	my ($d, $column) = @_;
-	my @values = ();
-	my %hash = ();
-	for my $i (0 .. $#{$d->{data}}) {
-		my $item = $d->{data}->[$i];
-		my $key = $item->{$column};
-		if (not exists $hash{$key}) {
-			push @values, $key;
-			$hash{$key} = [ $i ];
-		} else {
-			push @{$hash{$key}}, $i;
-		}
-	}
-	return { values => \@values, hash => \%hash };
-}
-
-sub join_merge_item
-{
-	my ($item1, $item2, $header) = @_;
-	my %hash = ();
-	for my $h (@{$header}) {
-		my ($d, $name, $index) = map { $h->{$_} } ("TSV", "name", "index");
-		if ($d eq "left") {
-			$hash{$name} = $item1->{$index};
-		} else {
-			$hash{$name} = $item2->{$index};
-		}
-	}
-	return \%hash;
-}
-
 sub join_tsv
 {
-	my ($tsv1, $tsv2, $column) = @_;
-	my $header = prepare_join_header($tsv1, $tsv2, $column);
-	my $h1 = prepare_join_hash($tsv1, $column);
-	my $h2 = prepare_join_hash($tsv2, $column);
+	my ($d1, $d2, $keys, $join_type) = @_;
+	my %h1 = map { $d1->{names}->[$_] => $_ } (0 .. $#{$d1->{names}});
+	my %h2 = map { $d2->{names}->[$_] => $_ } (0 .. $#{$d2->{names}});
+	for my $item (@{$keys}) {
+		delete $h1{$item->{left}};
+		delete $h2{$item->{right}};
+	}
+	my %shared = ();
+	for my $name (keys %h1) {
+		$shared{$name} = 1 if exists $h2{$name};
+	}
+	my @names = ();
+	my %map_1 = ();
+	my %map_2 = ();
+	for my $name (@{$d1->{names}}) {
+		my $name2 = $name . (exists $shared{$name} ? '.x' : '');
+		push @names, $name2;
+		$map_1{$name} = $name2;
+	}
+	for my $name (@{$d2->{names}}) {
+		next if not exists $h2{$name};
+		my $name2 = $name . (exists $shared{$name} ? '.y' : '');
+		push @names, $name2;
+		$map_2{$name} = $name2;
+	}
+
 	my @data = ();
-	for my $value (@{$h1->{values}}) {
-		next if not exists $h2->{hash}->{$value};
-		for my $i (@{$h1->{hash}->{$value}}) {
-			for my $j (@{$h2->{hash}->{$value}}) {
-				push @data, join_merge_item($tsv1->{data}->[$i], $tsv2->{data}->[$j], $header);
+	my %hash = ();
+	for my $i (0 .. $#{$d2->{data}}) {
+		my $item = $d2->{data}->[$i];
+		my $key = join("\t", map { $item->{$_->{left}} } @{$keys});
+		push @{$hash{$key}}, $i;
+	}
+	my %joined = ();
+	for my $i (0 .. $#{$d1->{data}}) {
+		my $item = $d1->{data}->[$i];
+		my $key = join("\t", map { $item->{$_->{right}} } @{$keys});
+		my @item2 = ();
+		if ($join_type eq 'inner' or $join_type eq 'right') {
+			next if not exists $hash{$key};
+		}
+		push @item2, $d2->{data}->[$_] for @{$hash{$key}};
+		push @item2, {} unless @item2;
+		for my $item2 (@item2) {
+			my %row = ();
+			for my $name (keys %map_1) {
+				$row{$map_1{$name}} = $item->{$name} // '';
+			}
+			for my $name (keys %map_2) {
+				$row{$map_2{$name}} = $item2->{$name} // '';
+			}
+			push @data, \%row;
+		}
+		$joined{$key} = 1;
+	}
+	if ($join_type eq 'full' or $join_type eq 'right') {
+		my %right_hash = map { $_->{left} => $_->{right} } @{$keys};
+		for my $key (keys %hash) {
+			next if $joined{$key};
+			for my $i (@{$hash{$key}}) {
+				my %row = ();
+				for my $name (keys %map_2) {
+					my $item2 = $d2->{data}->[$i];
+					for my $name (keys %map_1) {
+						if (exists $right_hash{$name}) {
+							$row{$name} = $item2->{$right_hash{$name}};
+						} else {
+							$row{$map_1{$name}} = '';
+						}
+					}
+					$row{$map_2{$name}} = $item2->{$name} // '';
+				}
+				push @data, \%row;
 			}
 		}
 	}
-	return {
-		names => [ map { $_->{name} } @{$header} ],
-		data => \@data
-	};
+
+	return { names => \@names, data => \@data };
 }
 
 sub is_numeric
@@ -590,10 +588,8 @@ sub load_tsv
 	my @data = ();
 	die "Error: Input file '$filename' does not exist" unless -e $filename or is_valid_xslx_ref($filename);
 	my ($mod, $con) = ("<", $filename);
-	if (not defined $sep) {
-		$sep = "\t";
-		$sep = "," if $filename =~ /\.csv(|\.gz|\.bz2)$/;
-	}
+	$sep = "\t" if not defined $sep or $sep eq '';
+	$sep = ',' if $filename =~ /\.csv(|\.gz|\.bz2)$/;
 	if (is_valid_xslx_ref($filename)) { return load_xlsx($filename, $no_header); }
 	if ($filename =~ /\.bed(|\.gz|\.bz2)$/) { return load_bed($filename); }
 	if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
@@ -1111,21 +1107,6 @@ Options:
 	exit 1;
 }
 
-sub print_usage_transpose
-{
-	my ($cmd, $opts) = @_;
-	print "
-Usage: $cmd_prefix$cmd [options] <in.txt>
-
-Options:
-   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
-   -s <CHAR>     Separate character, default: <TAB>
-   --no-header   Input file does not have header line
-
-";
-	exit 1;
-}
-
 sub print_usage_dim
 {
 	my ($cmd, $opts) = @_;
@@ -1278,6 +1259,21 @@ Options:
 	exit 1;
 }
 
+sub print_usage_transpose
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in.txt>
+
+Options:
+   -o <FILE>     Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>     Separate character, default: <TAB>
+   --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
 sub print_usage_sort
 {
 	my ($cmd, $opts) = @_;
@@ -1321,6 +1317,22 @@ Options:
    -s <CHAR>     Separate character, default: <TAB>
    -f <FILE>     Input file list, each line contains one file path
    --no-header   Input file does not have header line
+
+";
+	exit 1;
+}
+
+sub print_usage_join
+{
+	my ($cmd, $opts) = @_;
+	print "
+Usage: $cmd_prefix$cmd [options] <in-1.txt> <in-2.txt> [colnames]...
+
+Options:
+   -o <FILE>                   Output file, default: " . fetch_arg($opts, '-o') . "
+   -s <CHAR>                   Separate character, default: <TAB>
+   --no-header                 Input file does not have header line
+   -t {inner|left|right|full}  Joining type, default: inner
 
 ";
 	exit 1;
@@ -1723,7 +1735,7 @@ sub do_merge
 		'--no-header' => sub { $no_header = 1; },
 	};
 	my @in_files = ();
-	parse_args($cmd, \@args, \&print_usage_sort, $opts, [], \@in_files);
+	parse_args($cmd, \@args, \&print_usage_merge, $opts, [], \@in_files);
 
 	if ($file_list ne '') {
 		$file_list = $STDIN if $file_list eq '-';
@@ -1740,31 +1752,67 @@ sub do_merge
 	if (scalar(@in_files) == 1 and not -t STDIN and $file_list ne $STDIN) {
 		unshift @in_files, $STDIN;
 	}
-	print_usage_sort($cmd, $opts) if scalar(@in_files) < 2;
+	print_usage_merge($cmd, $opts) if scalar(@in_files) < 2;
 
 	my $d = load_tsv($in_files[0], $no_header, $sep);
 	for my $i (1 .. $#in_files) {
-		$d = merge_tsv($d, load_tsv($in_files[$i]));
+		$d = merge_tsv($d, load_tsv($in_files[$i], $no_header, $sep));
 	}
 	write_tsv($d, $STDOUT);
 	exit 0;
 }
 
-sub do_tsv_join
+sub do_join
 {
-	my ($left_file, $right_file, $column);
-	if (scalar(@ARGV) >= 3) {
-		($left_file, $right_file, $column) = @ARGV;
-	} elsif (scalar(@ARGV) == 2 and not -t STDIN) {
-		($left_file, $right_file, $column) = ($STDIN, @ARGV);
-	} else {
-		print "Usage: $cmd_prefix$cmd <in-left.txt> <in-right.txt> <column>\n";
-		exit 1;
+	my ($cmd, @args) = @_;
+
+	my ($in_file_1, $in_file_2, $no_header, $out_file, $sep, $join_type) = ('', '', 0, $STDOUT, "\t", 'inner');
+	my @by_cols = ();
+	my $opts = {
+		'-o' => \$out_file,
+		'-s' => \$sep,
+		'--no-header' => sub { $no_header = 1; },
+		'-t' => \$join_type,
+	};
+	parse_args($cmd, \@args, \&print_usage_join, $opts, [ \$in_file_1, \$in_file_2 ], \@by_cols);
+
+	if ($in_file_2 eq '') {
+		print_usage_join($cmd, $opts) if -t STDIN;
+		($in_file_1, $in_file_2) = ($STDIN, $in_file_1);
 	}
-	my $tsv1 = load_tsv($left_file);
-	my $tsv2 = load_tsv($right_file);
-	my $d = join_tsv($tsv1, $tsv2, $column);
-	write_tsv($d, $STDOUT);
+	print_usage_join($cmd, $opts) unless $in_file_1 ne '' and $in_file_2 ne '';
+
+	my %valid_join_types = map { $_ => 1 } ('inner', 'left', 'right', 'full');
+	die "Error: Invalid join type '$join_type'" unless exists $valid_join_types{$join_type};
+
+	my $d1 = load_tsv($in_file_1, $no_header, $sep);
+	my $d2 = load_tsv($in_file_2, $no_header, $sep);
+	my %names1 = map { $_ => 1 } @{$d1->{names}};
+	my %names2 = map { $_ => 1 } @{$d2->{names}};
+	my @keys = ();
+	if (not @by_cols) {
+		for my $name (@{$d1->{names}}) {
+			push @keys, { left => $name, right => $name } if exists $names2{$name};
+		}
+		die "Error: No shared column found between '$in_file_1' and '$in_file_2'" if not @keys;
+	} else {
+		for my $x (@by_cols) {
+			if (exists $names1{$x}) {
+				die "Error: File '$in_file_2' has not column '$x'" unless exists $names2{$x};
+				push @keys, { left => $x, right => $x };
+			} else {
+				die "Error: Invalid condition '$x'" if $x !~ /^(.+)==?(.+)$/;
+				my ($a, $op, $b) = ($1, $2, $3);
+				$a =~ s/(^\s*|\s*$)//g;
+				$b =~ s/(^\s*|\s*$)//g;
+				die "Error: File '$in_file_1' has not column '$a'" unless exists $names1{$a};
+				die "Error: File '$in_file_2' has not column '$b'" unless exists $names2{$b};
+				push @keys, { left => $a, right => $b };
+			}
+		}
+	}
+	my $d = join_tsv($d1, $d2, \@keys, $join_type);
+	write_tsv($d, $out_file);
 	exit 0;
 }
 

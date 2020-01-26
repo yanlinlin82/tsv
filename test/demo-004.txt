@@ -1,3 +1,4 @@
 name	gender
-Alice	Female
-Bob	Male
+Alice	female
+Bob	male
+David	male
