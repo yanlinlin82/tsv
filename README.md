@@ -43,9 +43,12 @@ chmod +x tsv
     tail          select tail n rows
     filter        filter by conditions
 
-- Manipulating
+- Editing
     cleanup       remove empty rows or columns
     transpose     matrix transpose
+    mutate        add/update column valies
+
+- Manipulating
     sort          sort by column(s)
     merge         merge multiple files
     join          join two tables by key column(s)
@@ -53,7 +56,7 @@ chmod +x tsv
 
 - Writing
     to-csv        write to CSV file
-    to-excel      write to Excel (.xlsx) file
+    to-xlsx       write to Excel (.xlsx) file
 
 - Others
     version       show program version
