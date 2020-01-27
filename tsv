@@ -7,7 +7,7 @@ BEGIN { eval 'use Data::Dumper' };
 # global variables
 
 my $APPNAME = 'tsv';
-my $VERSION = "0.2.200126-beta";
+my $VERSION = "0.2.1-200128-beta";
 
 my $STDIN = '/dev/stdin';
 my $STDOUT = '/dev/stdout';
