@@ -354,7 +354,10 @@ sub parse_expression_new
 	my $p = { s => $expression, size => length($expression), pos => 0 };
 	my @stack = ('#');
 	my @postfix = ();
+	my $last_token_type = '';
+	print STDERR "[DEBUG] parse_expression_new('$expression', {" . join('|', sort keys %{$names}) . "})\n" if $verbose > 1;
 	for (read_next($p); (my $token = $p->{token}) ne ''; read_next($p)) {
+		print STDERR "[DEBUG] ~ token='$token', stack=(" . join('|', @stack) . "), postfix=(" . join('|', map { "$_->{val}:$_->{type}" } @postfix) . ")\n" if $verbose > 1;
 		if ($p->{type} ne 'op') {
 			if ($p->{type} eq 'symbol' and not exists $names->{$token}) {
 				die "Error: Unknown column '$token'";
@@ -371,12 +374,15 @@ sub parse_expression_new
 			while ($PRECEDENCE{$token} <= $PRECEDENCE{$stack[$#stack]}) {
 				push @postfix, { type => 'op', val => pop @stack };
 			}
+			push @postfix, { type => 'dummy', val => '' } if $last_token_type eq 'op' or $last_token_type eq '';
 			push @stack, $token;
 		}
+		$last_token_type = $p->{type};
 	}
 	while ($stack[$#stack] ne '#') {
 		push @postfix, { type => 'op', val => pop @stack };
 	}
+	print STDERR '[DEBUG] => postfix=(' . join('|', map { "$_->{val}:$_->{type}" } @postfix) . ")\n" if $verbose > 1;
 	return \@postfix;
 }
 
@@ -395,7 +401,14 @@ sub eval_op
 {
 	my ($a, $op, $b) = @_;
 	my ($proc, $type);
-	if ($a->{type} eq 'number' and $b->{type} eq 'number') {
+	if ($a->{type} eq 'dummy' and $b->{type} eq 'number') {
+		my $single_calc = {
+			'+' => sub { return $_[1]; },
+			'-' => sub { return -$_[1]; },
+		};
+		$proc = $single_calc->{$op};
+		$type = 'number';
+	} elsif ($a->{type} eq 'number' and $b->{type} eq 'number') {
 		my $number_calc = {
 			'+'  => sub { return $_[0] +  $_[1]; },
 			'-'  => sub { return $_[0] -  $_[1]; },
@@ -426,10 +439,13 @@ sub eval_op
 			'=~' => sub { return $_[0] =~ $_[1]; },
 			'!~' => sub { return $_[0] !~ $_[1]; },
 		};
+		if ($a->{type} eq 'string' and $b->{type} eq 'number') {
+			$string_calc->{'*'} = sub { return $_[0] x $_[1]; };
+		}
 		$proc = $string_calc->{$op};
 		$type = 'string';
 	}
-	die "Error: Unsupported $type operator '$op' for '$a->{val}' and '$b->{val}'" unless defined $proc;
+	die "Error: Unsupported $type operator '$op' for '$a->{val}:$a->{type}' and '$b->{val}:$b->{type}'" unless defined $proc;
 	return { val => $proc->($a->{val}, $b->{val}), type => $type };
 }
 
@@ -641,7 +657,7 @@ sub build_sorter
 			push @sorter, { name => $col, order => '+', type => 'string' };
 		} elsif ($col =~ /^(.+?)([+-]?)(n?)$/) {
 			my ($name, $order, $type) = ($1, $2, $3);
-			print STDERR "($name)($order)($type)\n";
+			print STDERR "build_sorter: ($name)($order)($type)\n" if $verbose > 1;
 			if ($name =~ /^[0-9]+$/) {
 				die "Error: Invalid row number '$name'! It should be between 1 and $n" if $name < 1 or $name > $n;
 				$name = $names->[$name - 1];
