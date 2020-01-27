@@ -78,6 +78,8 @@ exit $DISPATCHER->{$cmd}->($cmd, @ARGV);
 sub basename { my $s = shift; $s =~ s/^.*[\/\\]//; return $s; }
 sub dirname  { my $s = shift; $s =~ s/[^\/\\]*$//; return $s; }
 
+sub is_numeric { my $v = shift; return do { no warnings; $v eq ($v + 0) }; }
+
 ############################################################
 # args processing
 
@@ -145,137 +147,7 @@ sub parse_args
 }
 
 ############################################################
-# data frame manipulating
-
-sub build_sorter
-{
-	my ($columns, $names) = @_;
-	my $n = scalar(@{$names});
-	my %index = map { $_ => 1 } @{$names};
-	my @sorter = ();
-	for my $col (@{$columns}) {
-		if (exists $index{$col}) {
-			push @sorter, { name => $col, order => '+', type => 'string' };
-		} elsif ($col =~ /^(.+?)([+-]?)(n?)$/) {
-			my ($name, $order, $type) = ($1, $2, $3);
-			print STDERR "($name)($order)($type)\n";
-			if ($name =~ /^[0-9]+$/) {
-				die "Error: Invalid row number '$name'! It should be between 1 and $n" if $name < 1 or $name > $n;
-				$name = $names->[$name - 1];
-			}
-			die "Error: Unknown column '$name'" if not exists $index{$name};
-			push @sorter, { name => $name, order => $order // '+', type => ($type eq 'n' ? 'number' : 'string') };
-		} else {
-			die "Error: Invalid sort option '$col'";
-		}
-	}
-	return sub {
-		my ($a, $b) = @_;
-		my $n = 0;
-		for my $s (@sorter) {
-			my $name = $s->{name};
-			my ($left, $right) = ($a->{$name}, $b->{$name});
-			($left, $right) = ($right, $left) if $s->{order} eq '-';
-			if ($s->{type} eq 'string') {
-				$n = ($left cmp $right);
-			} else {
-				$left =~ s/^[^0-9]*([0-9]+).*$/$1/;
-				$right =~ s/^[^0-9]*([0-9]+).*$/$1/;
-				$n = ($left <=> $right);
-			}
-			last if $n != 0;
-		}
-		return $n;
-	};
-}
-
-sub join_tsv
-{
-	my ($d1, $d2, $keys, $join_type) = @_;
-	my %h1 = map { $d1->{names}->[$_] => $_ } (0 .. $#{$d1->{names}});
-	my %h2 = map { $d2->{names}->[$_] => $_ } (0 .. $#{$d2->{names}});
-	for my $item (@{$keys}) {
-		delete $h1{$item->{left}};
-		delete $h2{$item->{right}};
-	}
-	my %shared = ();
-	for my $name (keys %h1) {
-		$shared{$name} = 1 if exists $h2{$name};
-	}
-	my @names = ();
-	my %map_1 = ();
-	my %map_2 = ();
-	for my $name (@{$d1->{names}}) {
-		my $name2 = $name . (exists $shared{$name} ? '.x' : '');
-		push @names, $name2;
-		$map_1{$name} = $name2;
-	}
-	for my $name (@{$d2->{names}}) {
-		next if not exists $h2{$name};
-		my $name2 = $name . (exists $shared{$name} ? '.y' : '');
-		push @names, $name2;
-		$map_2{$name} = $name2;
-	}
-
-	my @data = ();
-	my %hash = ();
-	for my $i (0 .. $#{$d2->{data}}) {
-		my $item = $d2->{data}->[$i];
-		my $key = join("\t", map { $item->{$_->{left}} } @{$keys});
-		push @{$hash{$key}}, $i;
-	}
-	my %joined = ();
-	for my $i (0 .. $#{$d1->{data}}) {
-		my $item = $d1->{data}->[$i];
-		my $key = join("\t", map { $item->{$_->{right}} } @{$keys});
-		my @item2 = ();
-		if ($join_type eq 'inner' or $join_type eq 'right') {
-			next if not exists $hash{$key};
-		}
-		push @item2, $d2->{data}->[$_] for @{$hash{$key}};
-		push @item2, {} unless @item2;
-		for my $item2 (@item2) {
-			my %row = ();
-			for my $name (keys %map_1) {
-				$row{$map_1{$name}} = $item->{$name} // '';
-			}
-			for my $name (keys %map_2) {
-				$row{$map_2{$name}} = $item2->{$name} // '';
-			}
-			push @data, \%row;
-		}
-		$joined{$key} = 1;
-	}
-	if ($join_type eq 'full' or $join_type eq 'right') {
-		my %right_hash = map { $_->{left} => $_->{right} } @{$keys};
-		for my $key (keys %hash) {
-			next if $joined{$key};
-			for my $i (@{$hash{$key}}) {
-				my %row = ();
-				for my $name (keys %map_2) {
-					my $item2 = $d2->{data}->[$i];
-					for my $name (keys %map_1) {
-						if (exists $right_hash{$name}) {
-							$row{$name} = $item2->{$right_hash{$name}};
-						} else {
-							$row{$map_1{$name}} = '';
-						}
-					}
-					$row{$map_2{$name}} = $item2->{$name} // '';
-				}
-				push @data, \%row;
-			}
-		}
-	}
-
-	return { names => \@names, data => \@data };
-}
-
-sub is_numeric
-{
-	my $val = shift @_;
-	return do { no warnings; $val eq ($val + 0) };
-}
+# expression evaluating
 
 sub read_next
 {
@@ -476,6 +348,412 @@ sub parse_or_expression
 	return $a;
 }
 
+sub parse_expression_new
+{
+	my ($expression, $names) = @_;
+	my $p = { s => $expression, size => length($expression), pos => 0 };
+	my @stack = ('#');
+	my @postfix = ();
+	for (read_next($p); (my $token = $p->{token}) ne ''; read_next($p)) {
+		if ($p->{type} ne 'op') {
+			if ($p->{type} eq 'symbol' and not exists $names->{$token}) {
+				die "Error: Unknown column '$token'";
+			}
+			push @postfix, { type => $p->{type}, val => $token };
+		} elsif ($token eq '(') {
+			push @stack, '(';
+		} elsif ($token eq ')') {
+			while ($stack[$#stack] ne '(') {
+				push @postfix, { type => 'op', val => pop @stack };
+			}
+			pop @stack;
+		} else {
+			while ($PRECEDENCE{$token} <= $PRECEDENCE{$stack[$#stack]}) {
+				push @postfix, { type => 'op', val => pop @stack };
+			}
+			push @stack, $token;
+		}
+	}
+	while ($stack[$#stack] ne '#') {
+		push @postfix, { type => 'op', val => pop @stack };
+	}
+	return \@postfix;
+}
+
+sub eval_val
+{
+	my ($v, $item) = @_;
+	if ($v->{type} eq 'symbol') {
+		my $val = $item->{$v->{val}};
+		my $type = is_numeric($val) ? 'number' : 'string';
+		return { val => $val, type => $type };
+	}
+	return $v;
+}
+
+sub eval_op
+{
+	my ($a, $op, $b) = @_;
+	my ($proc, $type);
+	if ($a->{type} eq 'number' and $b->{type} eq 'number') {
+		my $number_calc = {
+			'+'  => sub { return $_[0] +  $_[1]; },
+			'-'  => sub { return $_[0] -  $_[1]; },
+			'*'  => sub { return $_[0] *  $_[1]; },
+			'/'  => sub { return $_[0] /  $_[1]; },
+			'%'  => sub { return $_[0] %  $_[1]; },
+			'^'  => sub { return $_[0] ** $_[1]; },
+			'<<' => sub { return $_[0] << $_[1]; },
+			'>>' => sub { return $_[0] >> $_[1]; },
+			'==' => sub { return $_[0] == $_[1]; },
+			'!=' => sub { return $_[0] != $_[1]; },
+			'>'  => sub { return $_[0] >  $_[1]; },
+			'>=' => sub { return $_[0] >= $_[1]; },
+			'<'  => sub { return $_[0] <  $_[1]; },
+			'<=' => sub { return $_[0] <= $_[1]; },
+		};
+		$proc = $number_calc->{$op};
+		$type = 'number';
+	} else {
+		my $string_calc = {
+			'+'  => sub { return $_[0] . $_[1]; },
+			'==' => sub { return $_[0] eq $_[1]; },
+			'!=' => sub { return $_[0] ne $_[1]; },
+			'>'  => sub { return $_[0] gt $_[1]; },
+			'>=' => sub { return $_[0] ge $_[1]; },
+			'<'  => sub { return $_[0] lt $_[1]; },
+			'<=' => sub { return $_[0] le $_[1]; },
+			'=~' => sub { return $_[0] =~ $_[1]; },
+			'!~' => sub { return $_[0] !~ $_[1]; },
+		};
+		$proc = $string_calc->{$op};
+		$type = 'string';
+	}
+	die "Error: Unsupported $type operator '$op' for '$a->{val}' and '$b->{val}'" unless defined $proc;
+	return { val => $proc->($a->{val}, $b->{val}), type => $type };
+}
+
+sub eval_exp
+{
+	my ($exp, $item) = @_;
+	my @stack = ();
+	for my $e (@{$exp}) {
+		if ($e->{type} ne 'op') {
+			push @stack, $e;
+		} else {
+			my $op = $e->{val};
+			my $b = eval_val(pop(@stack), $item);
+			my $a = eval_val(pop(@stack), $item);
+			push @stack, eval_op($a, $op, $b);
+		}
+	}
+	return $stack[$#stack]->{val};
+}
+
+############################################################
+# numeric operation
+
+sub quantile
+{
+	my ($data, $prob) = @_;
+	my $index = (scalar(@{$data}) + 1) * $prob - 1;
+	my $base_value = $data->[int($index)];
+	return $base_value + ($data->[int($index) + 1] - $base_value) * ($index - int($index));
+}
+
+sub mean
+{
+	my $data = shift @_;
+	if (scalar(@{$data}) == 0) {
+		return "NA";
+	} else {
+		my $sum = 0;
+		for my $value (@{$data}) {
+			$sum += $value;
+		}
+		return $sum / scalar(@{$data});
+	}
+}
+
+############################################################
+# string operation
+
+sub skip_characters_in_range
+{
+	my ($s, $offset, $i, $lower, $upper) = @_;
+	my $c;
+	for (;;) {
+		$c = ord(substr($s, $offset + $i, 1));
+		last unless $c >= $lower and $c <= $upper;
+		++$i;
+	}
+	return ($i, $c);
+}
+
+sub get_character_width
+{
+	my ($s, $offset) = @_;
+	my $c = ord(substr($s, $offset, 1));
+	my ($byte_count, $width);
+	if ($c == 0x1B) {  # ANSI escape code
+		my $c1 = ord(substr($s, $offset + 1, 1));
+		if ($c1 == ord('[')) {  # Control Sequence Introducer
+			my $i = 2;
+			($i, $c1) = skip_characters_in_range($s, $offset, $i, 0x30, 0x3F);
+			($i, $c1) = skip_characters_in_range($s, $offset, $i, 0x20, 0x2F);
+			die "Unexpected CSI character '" . sprintf("%02X", $c1) . "' at byte offset '" . ($offset + $i) . "' of '$s'!" unless $c1 >= 0x40 and $c1 <= 0x7E;
+			$byte_count = $i + 1;
+			$width = 0;
+		} else {
+			die "Unexpected ANSI escape code '" . sprintf("%02X", $c1) . "' at byte offset '$offset' of '$s'!" unless $c1 >= 0x40 and $c1 <= 0x5F;
+			$byte_count = 2;
+			$width = 0;
+		}
+	} elsif ($c <= 0x7F) {  # U+0000 ~ U+007F: 0XXXXXXX
+		$byte_count = 1;
+		$width = 1;
+	} elsif ($c <= 0xE0) {  # U+0080 ~ U+07FF: 110XXXXX 10XXXXXX
+		$byte_count = 2;
+		$width = 2;
+	} elsif ($c <= 0xF0) {  # U+0800 ~ U+FFFF: 1110XXXX 10XXXXXX 10XXXXXX
+		my ($c1, $c2) = map { ord(substr($s, $offset + $_, 1)) } (1, 2);
+		$byte_count = 3;
+		$width = (($c == 0xE2 and ($c1 >= 0x84 and $c1 <= 0xB9) and ($c2 >= 0x80 and $c2 <= 0xBF)) ? 1 : 2);
+	} elsif ($c <= 0xF8) {  # U+10000 ~ U+1FFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX
+		$byte_count = 4;
+		$width = 2;
+	} elsif ($c <= 0xFC) {  # U+200000 ~ U+3FFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
+		$byte_count = 5;
+		$width = 2;
+	} elsif ($c <= 0xFE) {  # U+4000000 ~ U+7FFFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
+		$byte_count = 6;
+		$width = 2;
+	} else {
+		die "Unexpected UTF8 character '" . sprintf("%02X", $c) . "' at byte offset '$offset' of '$s'!";
+	}
+	die "Truncated string at byte offset '$offset' of '$s'!" if $offset + $byte_count > length($s);
+	return ($byte_count, $width);
+}
+
+sub get_text_width
+{
+	my $s = shift // '';
+	my $width = 0;
+	for (my $i = 0; $i < length($s);) {
+		my ($byte_count, $w) = get_character_width($s, $i);
+		$i += $byte_count;
+		$width += $w;
+	}
+	return $width;
+}
+
+sub trim_text_at_width
+{
+	my ($s, $expected_width, $append_suffix) = @_;
+	my $width_upper_limit = $expected_width - get_text_width($append_suffix);
+	my ($i, $width) = (0, 0);
+	for (; $i < length($s);) {
+		my ($byte_count, $w) = get_character_width($s, $i);
+		last if $width + $byte_count > $width_upper_limit;
+		$i += $byte_count;
+		$width += $w;
+	}
+	return substr($s, 0, $i) . $append_suffix . (" " x ($width_upper_limit - $width));
+}
+
+sub autofit_columns {
+	my $worksheet = shift;
+	my $col       = 0;
+	for my $width (@{$worksheet->{__col_widths}}) {
+		$worksheet->set_column($col, $col, $width) if $width;
+		$col++;
+	}
+}
+
+sub store_string_widths {
+
+	my $worksheet = shift;
+	my $col       = $_[1];
+	my $token     = $_[2];
+
+	# Ignore some tokens that we aren't interested in.
+	return if not defined $token;       # Ignore undefs.
+	return if $token eq '';             # Ignore blank cells.
+	return if ref $token eq 'ARRAY';    # Ignore array refs.
+	return if $token =~ /^=/;           # Ignore formula
+
+	# Ignore numbers
+	return if $token =~ /^([+-]?)(?=\d|\.\d)\d*(\.\d*)?([Ee]([+-]?\d+))?$/;
+
+	# Ignore various internal and external hyperlinks. In a real scenario
+	# you may wish to track the length of the optional strings used with
+	# urls.
+	return if $token =~ m{^[fh]tt?ps?://};
+	return if $token =~ m{^mailto:};
+	return if $token =~ m{^(?:in|ex)ternal:};
+
+	# We store the string width as data in the Worksheet object. We use
+	# a double underscore key name to avoid conflicts with future names.
+	#
+	my $old_width    = $worksheet->{__col_widths}->[$col];
+	my $string_width = string_width($token);
+
+	if (not defined $old_width or $string_width > $old_width) {
+		# You may wish to set a minimum column width as follows.
+		#return undef if $string_width < 10;
+
+		$worksheet->{__col_widths}->[$col] = $string_width;
+	}
+	# Return control to write();
+	return undef;
+}
+
+sub string_width {
+	return 0.9 * length($_[0]) + 3;
+}
+
+sub align_text
+{
+	my ($s, $w) = @_;
+	$s = '' unless defined $s;
+	if ($w > 0) {
+		my $tw = get_text_width($s);
+		if ($tw < $w) {
+			$s .= (' ' x ($w - $tw));
+		} elsif ($tw > $w) {
+			$s = trim_text_at_width($s, $w, "...");
+		}
+	}
+	return $s;
+}
+
+############################################################
+# data frame manipulating
+
+sub build_sorter
+{
+	my ($columns, $names) = @_;
+	my $n = scalar(@{$names});
+	my %index = map { $_ => 1 } @{$names};
+	my @sorter = ();
+	for my $col (@{$columns}) {
+		if (exists $index{$col}) {
+			push @sorter, { name => $col, order => '+', type => 'string' };
+		} elsif ($col =~ /^(.+?)([+-]?)(n?)$/) {
+			my ($name, $order, $type) = ($1, $2, $3);
+			print STDERR "($name)($order)($type)\n";
+			if ($name =~ /^[0-9]+$/) {
+				die "Error: Invalid row number '$name'! It should be between 1 and $n" if $name < 1 or $name > $n;
+				$name = $names->[$name - 1];
+			}
+			die "Error: Unknown column '$name'" if not exists $index{$name};
+			push @sorter, { name => $name, order => $order // '+', type => ($type eq 'n' ? 'number' : 'string') };
+		} else {
+			die "Error: Invalid sort option '$col'";
+		}
+	}
+	return sub {
+		my ($a, $b) = @_;
+		my $n = 0;
+		for my $s (@sorter) {
+			my $name = $s->{name};
+			my ($left, $right) = ($a->{$name}, $b->{$name});
+			($left, $right) = ($right, $left) if $s->{order} eq '-';
+			if ($s->{type} eq 'string') {
+				$n = ($left cmp $right);
+			} else {
+				$left =~ s/^[^0-9]*([0-9]+).*$/$1/;
+				$right =~ s/^[^0-9]*([0-9]+).*$/$1/;
+				$n = ($left <=> $right);
+			}
+			last if $n != 0;
+		}
+		return $n;
+	};
+}
+
+sub join_tsv
+{
+	my ($d1, $d2, $keys, $join_type) = @_;
+	my %h1 = map { $d1->{names}->[$_] => $_ } (0 .. $#{$d1->{names}});
+	my %h2 = map { $d2->{names}->[$_] => $_ } (0 .. $#{$d2->{names}});
+	for my $item (@{$keys}) {
+		delete $h1{$item->{left}};
+		delete $h2{$item->{right}};
+	}
+	my %shared = ();
+	for my $name (keys %h1) {
+		$shared{$name} = 1 if exists $h2{$name};
+	}
+	my @names = ();
+	my %map_1 = ();
+	my %map_2 = ();
+	for my $name (@{$d1->{names}}) {
+		my $name2 = $name . (exists $shared{$name} ? '.x' : '');
+		push @names, $name2;
+		$map_1{$name} = $name2;
+	}
+	for my $name (@{$d2->{names}}) {
+		next if not exists $h2{$name};
+		my $name2 = $name . (exists $shared{$name} ? '.y' : '');
+		push @names, $name2;
+		$map_2{$name} = $name2;
+	}
+
+	my @data = ();
+	my %hash = ();
+	for my $i (0 .. $#{$d2->{data}}) {
+		my $item = $d2->{data}->[$i];
+		my $key = join("\t", map { $item->{$_->{left}} } @{$keys});
+		push @{$hash{$key}}, $i;
+	}
+	my %joined = ();
+	for my $i (0 .. $#{$d1->{data}}) {
+		my $item = $d1->{data}->[$i];
+		my $key = join("\t", map { $item->{$_->{right}} } @{$keys});
+		my @item2 = ();
+		if ($join_type eq 'inner' or $join_type eq 'right') {
+			next if not exists $hash{$key};
+		}
+		push @item2, $d2->{data}->[$_] for @{$hash{$key}};
+		push @item2, {} unless @item2;
+		for my $item2 (@item2) {
+			my %row = ();
+			for my $name (keys %map_1) {
+				$row{$map_1{$name}} = $item->{$name} // '';
+			}
+			for my $name (keys %map_2) {
+				$row{$map_2{$name}} = $item2->{$name} // '';
+			}
+			push @data, \%row;
+		}
+		$joined{$key} = 1;
+	}
+	if ($join_type eq 'full' or $join_type eq 'right') {
+		my %right_hash = map { $_->{left} => $_->{right} } @{$keys};
+		for my $key (keys %hash) {
+			next if $joined{$key};
+			for my $i (@{$hash{$key}}) {
+				my %row = ();
+				for my $name (keys %map_2) {
+					my $item2 = $d2->{data}->[$i];
+					for my $name (keys %map_1) {
+						if (exists $right_hash{$name}) {
+							$row{$name} = $item2->{$right_hash{$name}};
+						} else {
+							$row{$map_1{$name}} = '';
+						}
+					}
+					$row{$map_2{$name}} = $item2->{$name} // '';
+				}
+				push @data, \%row;
+			}
+		}
+	}
+
+	return { names => \@names, data => \@data };
+}
+
 sub build_filter
 {
 	my ($conditions, $names) = @_;
@@ -632,57 +910,6 @@ sub load_xlsx
 		}
 	}
 	return $d;
-}
-
-sub autofit_columns {
-	my $worksheet = shift;
-	my $col       = 0;
-	for my $width (@{$worksheet->{__col_widths}}) {
-		$worksheet->set_column($col, $col, $width) if $width;
-		$col++;
-	}
-}
-
-sub store_string_widths {
-
-	my $worksheet = shift;
-	my $col       = $_[1];
-	my $token     = $_[2];
-
-	# Ignore some tokens that we aren't interested in.
-	return if not defined $token;       # Ignore undefs.
-	return if $token eq '';             # Ignore blank cells.
-	return if ref $token eq 'ARRAY';    # Ignore array refs.
-	return if $token =~ /^=/;           # Ignore formula
-
-	# Ignore numbers
-	return if $token =~ /^([+-]?)(?=\d|\.\d)\d*(\.\d*)?([Ee]([+-]?\d+))?$/;
-
-	# Ignore various internal and external hyperlinks. In a real scenario
-	# you may wish to track the length of the optional strings used with
-	# urls.
-	return if $token =~ m{^[fh]tt?ps?://};
-	return if $token =~ m{^mailto:};
-	return if $token =~ m{^(?:in|ex)ternal:};
-
-	# We store the string width as data in the Worksheet object. We use
-	# a double underscore key name to avoid conflicts with future names.
-	#
-	my $old_width    = $worksheet->{__col_widths}->[$col];
-	my $string_width = string_width($token);
-
-	if (not defined $old_width or $string_width > $old_width) {
-		# You may wish to set a minimum column width as follows.
-		#return undef if $string_width < 10;
-
-		$worksheet->{__col_widths}->[$col] = $string_width;
-	}
-	# Return control to write();
-	return undef;
-}
-
-sub string_width {
-	return 0.9 * length($_[0]) + 3;
 }
 
 sub open_file
@@ -895,21 +1122,6 @@ sub write_tsv
 	close $fh;
 }
 
-sub align_text
-{
-	my ($s, $w) = @_;
-	$s = '' unless defined $s;
-	if ($w > 0) {
-		my $tw = get_text_width($s);
-		if ($tw < $w) {
-			$s .= (' ' x ($w - $tw));
-		} elsif ($tw > $w) {
-			$s = trim_text_at_width($s, $w, "...");
-		}
-	}
-	return $s;
-}
-
 sub merge_tsv
 {
 	my ($a, $b) = @_;
@@ -920,111 +1132,6 @@ sub merge_tsv
 		$hash{$name} = 1;
 	}
 	return { names => \@names, data => [ @{$a->{data}}, @{$b->{data}} ] };
-}
-
-sub skip_characters_in_range
-{
-	my ($s, $offset, $i, $lower, $upper) = @_;
-	my $c;
-	for (;;) {
-		$c = ord(substr($s, $offset + $i, 1));
-		last unless $c >= $lower and $c <= $upper;
-		++$i;
-	}
-	return ($i, $c);
-}
-
-sub get_character_width
-{
-	my ($s, $offset) = @_;
-	my $c = ord(substr($s, $offset, 1));
-	my ($byte_count, $width);
-	if ($c == 0x1B) {  # ANSI escape code
-		my $c1 = ord(substr($s, $offset + 1, 1));
-		if ($c1 == ord('[')) {  # Control Sequence Introducer
-			my $i = 2;
-			($i, $c1) = skip_characters_in_range($s, $offset, $i, 0x30, 0x3F);
-			($i, $c1) = skip_characters_in_range($s, $offset, $i, 0x20, 0x2F);
-			die "Unexpected CSI character '" . sprintf("%02X", $c1) . "' at byte offset '" . ($offset + $i) . "' of '$s'!" unless $c1 >= 0x40 and $c1 <= 0x7E;
-			$byte_count = $i + 1;
-			$width = 0;
-		} else {
-			die "Unexpected ANSI escape code '" . sprintf("%02X", $c1) . "' at byte offset '$offset' of '$s'!" unless $c1 >= 0x40 and $c1 <= 0x5F;
-			$byte_count = 2;
-			$width = 0;
-		}
-	} elsif ($c <= 0x7F) {  # U+0000 ~ U+007F: 0XXXXXXX
-		$byte_count = 1;
-		$width = 1;
-	} elsif ($c <= 0xE0) {  # U+0080 ~ U+07FF: 110XXXXX 10XXXXXX
-		$byte_count = 2;
-		$width = 2;
-	} elsif ($c <= 0xF0) {  # U+0800 ~ U+FFFF: 1110XXXX 10XXXXXX 10XXXXXX
-		my ($c1, $c2) = map { ord(substr($s, $offset + $_, 1)) } (1, 2);
-		$byte_count = 3;
-		$width = (($c == 0xE2 and ($c1 >= 0x84 and $c1 <= 0xB9) and ($c2 >= 0x80 and $c2 <= 0xBF)) ? 1 : 2);
-	} elsif ($c <= 0xF8) {  # U+10000 ~ U+1FFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX
-		$byte_count = 4;
-		$width = 2;
-	} elsif ($c <= 0xFC) {  # U+200000 ~ U+3FFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
-		$byte_count = 5;
-		$width = 2;
-	} elsif ($c <= 0xFE) {  # U+4000000 ~ U+7FFFFFFF: 11110XXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX 10XXXXXX
-		$byte_count = 6;
-		$width = 2;
-	} else {
-		die "Unexpected UTF8 character '" . sprintf("%02X", $c) . "' at byte offset '$offset' of '$s'!";
-	}
-	die "Truncated string at byte offset '$offset' of '$s'!" if $offset + $byte_count > length($s);
-	return ($byte_count, $width);
-}
-
-sub get_text_width
-{
-	my $s = shift // '';
-	my $width = 0;
-	for (my $i = 0; $i < length($s);) {
-		my ($byte_count, $w) = get_character_width($s, $i);
-		$i += $byte_count;
-		$width += $w;
-	}
-	return $width;
-}
-
-sub trim_text_at_width
-{
-	my ($s, $expected_width, $append_suffix) = @_;
-	my $width_upper_limit = $expected_width - get_text_width($append_suffix);
-	my ($i, $width) = (0, 0);
-	for (; $i < length($s);) {
-		my ($byte_count, $w) = get_character_width($s, $i);
-		last if $width + $byte_count > $width_upper_limit;
-		$i += $byte_count;
-		$width += $w;
-	}
-	return substr($s, 0, $i) . $append_suffix . (" " x ($width_upper_limit - $width));
-}
-
-sub quantile
-{
-	my ($data, $prob) = @_;
-	my $index = (scalar(@{$data}) + 1) * $prob - 1;
-	my $base_value = $data->[int($index)];
-	return $base_value + ($data->[int($index) + 1] - $base_value) * ($index - int($index));
-}
-
-sub mean
-{
-	my $data = shift @_;
-	if (scalar(@{$data}) == 0) {
-		return "NA";
-	} else {
-		my $sum = 0;
-		for my $value (@{$data}) {
-			$sum += $value;
-		}
-		return $sum / scalar(@{$data});
-	}
 }
 
 sub write_align
@@ -1174,108 +1281,6 @@ sub write_transpose
 			} @{$d->{names}} ]
 	};
 	write_tsv($res, $out_file);
-}
-
-sub parse_expression_new
-{
-	my ($expression, $names) = @_;
-	my $p = { s => $expression, size => length($expression), pos => 0 };
-	my @stack = ('#');
-	my @postfix = ();
-	for (read_next($p); (my $token = $p->{token}) ne ''; read_next($p)) {
-		if ($p->{type} ne 'op') {
-			if ($p->{type} eq 'symbol' and not exists $names->{$token}) {
-				die "Error: Unknown column '$token'";
-			}
-			push @postfix, { type => $p->{type}, val => $token };
-		} elsif ($token eq '(') {
-			push @stack, '(';
-		} elsif ($token eq ')') {
-			while ($stack[$#stack] ne '(') {
-				push @postfix, { type => 'op', val => pop @stack };
-			}
-			pop @stack;
-		} else {
-			while ($PRECEDENCE{$token} <= $PRECEDENCE{$stack[$#stack]}) {
-				push @postfix, { type => 'op', val => pop @stack };
-			}
-			push @stack, $token;
-		}
-	}
-	while ($stack[$#stack] ne '#') {
-		push @postfix, { type => 'op', val => pop @stack };
-	}
-	return \@postfix;
-}
-
-sub eval_val
-{
-	my ($v, $item) = @_;
-	if ($v->{type} eq 'symbol') {
-		my $val = $item->{$v->{val}};
-		my $type = is_numeric($val) ? 'number' : 'string';
-		return { val => $val, type => $type };
-	}
-	return $v;
-}
-
-sub eval_op
-{
-	my ($a, $op, $b) = @_;
-	my ($proc, $type);
-	if ($a->{type} eq 'number' and $b->{type} eq 'number') {
-		my $number_calc = {
-			'+'  => sub { return $_[0] +  $_[1]; },
-			'-'  => sub { return $_[0] -  $_[1]; },
-			'*'  => sub { return $_[0] *  $_[1]; },
-			'/'  => sub { return $_[0] /  $_[1]; },
-			'%'  => sub { return $_[0] %  $_[1]; },
-			'^'  => sub { return $_[0] ** $_[1]; },
-			'<<' => sub { return $_[0] << $_[1]; },
-			'>>' => sub { return $_[0] >> $_[1]; },
-			'==' => sub { return $_[0] == $_[1]; },
-			'!=' => sub { return $_[0] != $_[1]; },
-			'>'  => sub { return $_[0] >  $_[1]; },
-			'>=' => sub { return $_[0] >= $_[1]; },
-			'<'  => sub { return $_[0] <  $_[1]; },
-			'<=' => sub { return $_[0] <= $_[1]; },
-		};
-		$proc = $number_calc->{$op};
-		$type = 'number';
-	} else {
-		my $string_calc = {
-			'+'  => sub { return $_[0] . $_[1]; },
-			'==' => sub { return $_[0] eq $_[1]; },
-			'!=' => sub { return $_[0] ne $_[1]; },
-			'>'  => sub { return $_[0] gt $_[1]; },
-			'>=' => sub { return $_[0] ge $_[1]; },
-			'<'  => sub { return $_[0] lt $_[1]; },
-			'<=' => sub { return $_[0] le $_[1]; },
-			'=~' => sub { return $_[0] =~ $_[1]; },
-			'!~' => sub { return $_[0] !~ $_[1]; },
-		};
-		$proc = $string_calc->{$op};
-		$type = 'string';
-	}
-	die "Error: Unsupported $type operator '$op' for '$a->{val}' and '$b->{val}'" unless defined $proc;
-	return { val => $proc->($a->{val}, $b->{val}), type => $type };
-}
-
-sub eval_exp
-{
-	my ($exp, $item) = @_;
-	my @stack = ();
-	for my $e (@{$exp}) {
-		if ($e->{type} ne 'op') {
-			push @stack, $e;
-		} else {
-			my $op = $e->{val};
-			my $b = eval_val(pop(@stack), $item);
-			my $a = eval_val(pop(@stack), $item);
-			push @stack, eval_op($a, $op, $b);
-		}
-	}
-	return $stack[$#stack]->{val};
 }
 
 sub build_calculator
