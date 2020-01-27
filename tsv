@@ -319,7 +319,7 @@ sub read_next
 		($cond->{pos}, $cond->{token}, $cond->{type}) = ($pos, $token, 'symbol');
 		return;
 	} else {
-		my @op = ('(', ')', '+', '-', '*', '/', '%', '=~', '!~', '==', '!=', '>=', '>', '<=', '<', '&&', '||', '!');
+		my @op = ('(', ')', '+', '-', '*', '/', '%', '^', '<<', '>>', '=~', '!~', '==', '!=', '>=', '>', '<=', '<', '&&', '||', '&', '|', '!');
 		for my $op (@op) {
 			if (substr($s, $pos, length($op)) eq $op) {
 				($cond->{pos}, $cond->{token}, $cond->{type}) = ($pos + length($op), $op, 'op');
@@ -1161,21 +1161,18 @@ sub write_transpose
 	write_tsv($res, $out_file);
 }
 
-sub run_calc
-{
-	my ($item, $calc) = @_;
-	my ($name, $exp) = ($calc->{var}, $calc->{exp});
-	$item->{$name} = eval_filter($exp, $item);
-}
-
 sub build_calculator
 {
-	my ($s, $names) = @_;
-	die "Error: Invalid statment '$s'" if $s !~ /^\s*(\w+)\s*=\s*(.+)$/;
-	my ($var, $exp) = ($1, $2);
-	my $p = { s => $exp, size => length($exp), pos => 0 };
+	my ($statement, $names) = @_;
+	die "Error: Invalid statment '$statement'" if $statement !~ /^\s*(\w+)\s*=\s*(.+)$/;
+	my ($var, $expression) = ($1, $2);
+	my $p = { s => $expression, size => length($expression), pos => 0 };
 	read_next($p);
-	return { var => $var, exp => parse_expression($p, $names) };
+	my $exp = parse_expression($p, $names);
+	return { var => $var, proc => sub {
+			my $item = shift;
+			$item->{$var} = eval_filter($exp, $item);
+		} };
 }
 
 ############################################################
@@ -1894,15 +1891,13 @@ sub do_mutate
 	my $d = load_tsv($in_file, $no_header, $sep);
 	my %names = map { $_ => 1 } @{$d->{names}};
 	my @calculator = map { build_calculator($_, \%names) } @statements;
+	for my $var (map { $_->{var} } @calculator) {
+		next if exists $names{$var};
+		push @{$d->{names}}, $var;
+		$names{$var} = 1;
+	}
 	for my $item (@{$d->{data}}) {
-		for my $calc (@calculator) {
-			my $name = $calc->{var};
-			if (not exists $names{$name}) {
-				push @{$d->{names}}, $name;
-				$names{$name} = 1;
-			}
-			run_calc($item, $calc);
-		}
+		$_->{proc}->($item) for @calculator;
 	}
 	write_tsv($d, $out_file);
 	exit 0;
