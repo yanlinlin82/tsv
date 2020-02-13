@@ -1040,7 +1040,7 @@ sub load_tsv
 	if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
 	my $fh = open_file($filename);
 	my %hash = ();
-	if (defined $col) {
+	if (defined $col and $col ne '') {
 		$no_header = 1;
 		@names = split(",", $col);
 		@names = prepare_colnames(\@names, \%hash);
