@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/env -S perl -T -w
 use strict;
 use warnings;
 BEGIN { eval 'use Data::Dumper' };
@@ -1321,11 +1321,9 @@ sub build_calculator
 
 sub get_version_string
 {
-	chomp(my $hashcode = `md5sum $0`);
 	my $version_suffix = '';
-	if ($hashcode ne '') {
-		$version_suffix = " (" . substr($hashcode, 0, 7) . ")";
-	}
+	eval("use Digest::MD5 qw(md5_hex)");
+	$version_suffix = " (" . substr(md5_hex($0), 0, 7) . ")" unless $@;
 	return "$VERSION$version_suffix";
 }
 
