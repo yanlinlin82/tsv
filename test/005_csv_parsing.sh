@@ -15,11 +15,9 @@ EOF
 # Check if the field is parsed as one field (not split by commas)
 output1=$(tsv-align test_csv_test1.csv)
 if echo "$output1" | grep -q "9S,11S,15S-Trihydroxy-5Z,13E-prostadienoic acid"; then
-    echo "✓ Test 1 PASSED: Quoted fields with commas parsed correctly as single field"
+    echo "OK - Quoted fields with commas parsed correctly as single field"
 else
-    echo "✗ Test 1 FAILED: Quoted fields with commas split incorrectly"
-    echo "Output:"
-    echo "$output1"
+    echo "Failed - Quoted fields with commas split incorrectly"
 fi
 
 # Test 2: CSV with escaped quotes
@@ -33,11 +31,9 @@ EOF
 # Check if escaped quotes and commas in quotes are handled correctly
 output2=$(tsv-align test_csv_test2.csv)
 if echo "$output2" | grep -q "Smith, John" && echo "$output2" | grep -q "Contains \"quoted\" text"; then
-    echo "✓ Test 2 PASSED: Escaped quotes and commas in quotes handled correctly"
+    echo "OK - Escaped quotes and commas in quotes handled correctly"
 else
-    echo "✗ Test 2 FAILED: Escaped quotes or commas not handled correctly"
-    echo "Output:"
-    echo "$output2"
+    echo "Failed - Escaped quotes or commas not handled correctly"
 fi
 
 # Test 3: Mixed quoted and unquoted fields
@@ -50,11 +46,9 @@ EOF
 # Check if mixed fields are parsed correctly
 output3=$(tsv-align test_csv_test3.csv)
 if echo "$output3" | grep -q "Quoted, field" && echo "$output3" | grep -q "Another, quoted"; then
-    echo "✓ Test 3 PASSED: Mixed quoted and unquoted fields handled correctly"
+    echo "OK - Mixed quoted and unquoted fields handled correctly"
 else
-    echo "✗ Test 3 FAILED: Mixed fields not handled correctly"
-    echo "Output:"
-    echo "$output3"
+    echo "Failed - Mixed fields not handled correctly"
 fi
 
 # Test 4: Empty quoted fields
@@ -67,11 +61,9 @@ EOF
 # Check if empty quoted fields are handled correctly
 output4=$(tsv-align test_csv_test4.csv)
 if echo "$output4" | grep -q "empty"; then
-    echo "✓ Test 4 PASSED: Empty quoted fields handled correctly"
+    echo "OK - Empty quoted fields handled correctly"
 else
-    echo "✗ Test 4 FAILED: Empty quoted fields not handled correctly"
-    echo "Output:"
-    echo "$output4"
+    echo "Failed - Empty quoted fields not handled correctly"
 fi
 
 # Test 5: Complex nested quotes and commas
@@ -85,11 +77,9 @@ EOF
 # Check if complex fields are parsed correctly
 output5=$(tsv-align test_csv_test5.csv)
 if echo "$output5" | grep -q "Field with \"nested\" quotes and, commas" && echo "$output5" | grep -q "Another \"complex\" field, with, multiple, commas"; then
-    echo "✓ Test 5 PASSED: Complex nested quotes and commas handled correctly"
+    echo "OK - Complex nested quotes and commas handled correctly"
 else
-    echo "✗ Test 5 FAILED: Complex fields not handled correctly"
-    echo "Output:"
-    echo "$output5"
+    echo "Failed - Complex fields not handled correctly"
 fi
 
 # Test 6: Verify TSV files still work correctly (backward compatibility)
@@ -103,11 +93,9 @@ EOF
 # Check if TSV files still work
 output6=$(tsv-align test_tsv_test6.txt)
 if echo "$output6" | grep -q "Alice" && echo "$output6" | grep -q "Bob"; then
-    echo "✓ Test 6 PASSED: TSV files still work correctly"
+    echo "OK - TSV files still work correctly"
 else
-    echo "✗ Test 6 FAILED: TSV files broken"
-    echo "Output:"
-    echo "$output6"
+    echo "Failed - TSV files broken"
 fi
 
 # Test 7: CSV with trailing commas
@@ -120,11 +108,9 @@ EOF
 # Check if trailing commas are handled correctly
 output7=$(tsv-align test_csv_test7.csv)
 if echo "$output7" | grep -q "value1" && echo "$output7" | grep -q "value2" && echo "$output7" | grep -q "value3"; then
-    echo "✓ Test 7 PASSED: Trailing commas handled correctly"
+    echo "OK - Trailing commas handled correctly"
 else
-    echo "✗ Test 7 FAILED: Trailing commas not handled correctly"
-    echo "Output:"
-    echo "$output7"
+    echo "Failed - Trailing commas not handled correctly"
 fi
 
 # Test 8: Verify the original problematic case works
@@ -137,11 +123,9 @@ EOF
 # This should NOT create extra columns like _1, _2, _3
 output8=$(tsv-align test_original_case.csv)
 if echo "$output8" | grep -q "_1\|_2\|_3"; then
-    echo "✗ Test 8 FAILED: Still creating extra columns from commas in quotes"
-    echo "Output:"
-    echo "$output8"
+    echo "Failed - Still creating extra columns from commas in quotes"
 else
-    echo "✓ Test 8 PASSED: No extra columns created from commas in quotes"
+    echo "OK - No extra columns created from commas in quotes"
 fi
 
 # Cleanup test files

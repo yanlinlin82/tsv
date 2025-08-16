@@ -2550,31 +2550,74 @@ sub do_test
 {
 	my ($cmd, @args) = @_;
 	
-	# 解析测试命令的参数
+	# Parse test command arguments
 	my $test_verbose = 0;
+	my @test_filters = ();
 	my $opts = {
 		'-v' => sub { $test_verbose = 1; },
 		'--verbose' => sub { $test_verbose = 1; },
 	};
 	
-	# 解析参数
+	# Parse arguments
 	for my $arg (@args) {
 		if ($arg eq '-v' or $arg eq '--verbose') {
 			$test_verbose = 1;
 		} elsif ($arg eq '-h' or $arg eq '--help') {
-			print STDERR "Usage: $cmd [options]\n";
+			print STDERR "Usage: $cmd [options] [test_patterns...]\n";
 			print STDERR "Options:\n";
 			print STDERR "  -v, --verbose    Show detailed test output\n";
 			print STDERR "  -h, --help       Show this help message\n";
+			print STDERR "\n";
+			print STDERR "Test patterns:\n";
+			print STDERR "  You can specify test patterns to run only specific tests.\n";
+			print STDERR "  Examples:\n";
+			print STDERR "    $cmd                    # Run all tests\n";
+			print STDERR "    $cmd csv                # Run tests containing 'csv'\n";
+			print STDERR "    $cmd 005                # Run test 005\n";
+			print STDERR "    $cmd security           # Run security-related tests\n";
 			exit 0;
+		} else {
+			# Add as test filter
+			push @test_filters, $arg;
 		}
 	}
 	
 	my ($total, $ok, $failed) = (0, 0, 0);
 	chdir(dirname($0));
 	
-	# 获取所有测试脚本并按名称排序
-	my @scripts = sort glob("test/*.sh");
+	# Get all test scripts and filter them if specified
+	my @all_scripts = sort glob("test/*.sh");
+	my @scripts = ();
+	
+	if (@test_filters) {
+		# Filter scripts based on patterns
+		for my $script (@all_scripts) {
+			my $script_name = basename($script);
+			my $script_base = $script_name;
+			$script_base =~ s/\.sh$//;  # Remove .sh extension
+			
+			# Check if script matches any filter pattern
+			my $matched = 0;
+			for my $filter (@test_filters) {
+				if ($script_name =~ /$filter/i or $script_base =~ /$filter/i) {
+					$matched = 1;
+					last;
+				}
+			}
+			push @scripts, $script if $matched;
+		}
+		
+		if (@scripts == 0) {
+			print STDERR "Error: No test scripts match the specified patterns: " . join(", ", @test_filters) . "\n";
+			print STDERR "Available test scripts:\n";
+			for my $script (@all_scripts) {
+				print STDERR "  $script\n";
+			}
+			exit 1;
+		}
+	} else {
+		@scripts = @all_scripts;
+	}
 	
 	if ($test_verbose > 0) {
 		print STDERR "==========================================\n";
@@ -2589,11 +2632,10 @@ sub do_test
 	
 	foreach my $script (@scripts) {
 		if ($test_verbose > 0) {
-			print STDERR "==========================================\n";
-			print STDERR "Running: $script\n";
-			print STDERR "==========================================\n";
-		} else {
 			print STDERR "$script\n";
+		} else {
+			# Show filename in non-verbose mode without newline, with space before dots
+			print STDERR "$script ";
 		}
 		
 		open my $fh, "-|", $script or die "Error: Can not execute script '$script'!";
@@ -2607,41 +2649,35 @@ sub do_test
 				$ok++;
 				$script_ok++;
 				if ($test_verbose > 0) {
-					print STDERR "✅ $line\n";
-				} else {
 					print STDERR ". $line\n";
+				} else {
+					print STDERR ".";
 				}
 			} elsif ($line =~ /^Failed/) {
 				$total++;
 				$failed++;
 				$script_failed++;
 				if ($test_verbose > 0) {
-					print STDERR "❌ $line\n";
-				} else {
 					print STDERR ". $line\n";
+				} else {
+					print STDERR ".";
 				}
 			} elsif ($test_verbose > 0) {
-				# 显示测试进度和详细信息
+				# Show test progress and details
 				if ($line =~ /^Test \d+:/) {
-					print STDERR "\n🔍 $line\n";
+					print STDERR "\n$line\n";
 				} elsif ($line =~ /^Testing/) {
-					print STDERR "\n📋 $line\n";
+					print STDERR "\n$line\n";
 				} elsif ($line =~ /^Error:/) {
-					print STDERR "💥 $line\n";
+					print STDERR "$line\n";
 				} elsif ($line =~ /^Warning:/) {
-					print STDERR "⚠️  $line\n";
+					print STDERR "$line\n";
 				} elsif ($line =~ /^OK -/) {
-					print STDERR "  ✅ $line\n";
+					print STDERR "  $line\n";
 				} elsif ($line =~ /^Failed -/) {
-					print STDERR "  ❌ $line\n";
-				} elsif ($line =~ /^Security fixes testing completed/) {
-					print STDERR "\n🏁 $line\n";
-				} elsif ($line =~ /^Expression parser testing completed/) {
-					print STDERR "\n🏁 $line\n";
-				} elsif ($line =~ /^Security vulnerability testing completed/) {
-					print STDERR "\n🏁 $line\n";
-				} elsif ($line =~ /^Test cleanup completed/) {
-					print STDERR "\n🧹 $line\n";
+					print STDERR "  $line\n";
+				} elsif ($line =~ /testing completed/) {
+					print STDERR "\n$line\n";
 				} else {
 					print STDERR "  $line\n";
 				}
@@ -2650,15 +2686,22 @@ sub do_test
 		close $fh;
 		
 		if ($test_verbose > 0) {
-			print STDERR "\n📊 Script Summary: $script\n";
+			print STDERR "\nScript Summary: $script\n";
 			print STDERR "  Passed: $script_ok, Failed: $script_failed\n";
 			if ($script_failed > 0) {
-				print STDERR "  ⚠️  Some tests failed in this script\n";
+				print STDERR "  Some tests failed in this script\n";
 			} else {
-				print STDERR "  🎉 All tests passed in this script\n";
+				print STDERR "  All tests passed in this script\n";
 			}
 			print STDERR "\n";
+		} else {
+			# Add newline after completing each test file in non-verbose mode
+			print STDERR "\n";
 		}
+	}
+	
+	if ($test_verbose == 0) {
+		print STDERR "\n";  # New line after all progress dots
 	}
 	
 	print STDERR "==========================================\n";
@@ -2669,9 +2712,9 @@ sub do_test
 	print STDERR "Failed: $failed\n";
 	
 	if ($failed == 0) {
-		print STDERR "🎉 All tests passed!\n";
+		print STDERR "All tests passed!\n";
 	} else {
-		print STDERR "❌ $failed test(s) failed. Please review the output above.\n";
+		print STDERR "$failed test(s) failed. Please review the output above.\n";
 	}
 	print STDERR "==========================================\n";
 	

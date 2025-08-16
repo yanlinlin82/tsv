@@ -16,11 +16,9 @@ EOF
 
 output1=$(tsv-align test_csv_newlines.csv 2>&1)
 if echo "$output1" | grep -q "Field with" && echo "$output1" | grep -q "newlines"; then
-    echo "✓ Test 1 PASSED: Newlines in quoted fields handled gracefully"
+    echo "OK - Newlines in quoted fields handled gracefully"
 else
-    echo "✗ Test 1 FAILED: Newlines in quoted fields not handled correctly"
-    echo "Output:"
-    echo "$output1"
+    echo "Failed - Newlines in quoted fields not handled correctly"
 fi
 
 # Test 2: CSV with special characters in quoted fields
@@ -34,11 +32,9 @@ EOF
 
 output2=$(tsv-align test_csv_special.csv)
 if echo "$output2" | grep -q "O'Connor" && echo "$output2" | grep -q "Smith & Jones" && echo "$output2" | grep -q "Price: \$100"; then
-    echo "✓ Test 2 PASSED: Special characters in quoted fields handled correctly"
+    echo "OK - Special characters in quoted fields handled correctly"
 else
-    echo "✗ Test 2 FAILED: Special characters not handled correctly"
-    echo "Output:"
-    echo "$output2"
+    echo "Failed - Special characters not handled correctly"
 fi
 
 # Test 3: CSV with very long quoted fields
@@ -51,11 +47,9 @@ EOF
 
 output3=$(tsv-align test_csv_long.csv)
 if echo "$output3" | grep -q "This is a very long field" && echo "$output3" | grep -q "Another long field with, commas, and \"quotes\""; then
-    echo "✓ Test 3 PASSED: Very long quoted fields handled correctly"
+    echo "OK - Very long quoted fields handled correctly"
 else
-    echo "✗ Test 3 FAILED: Very long quoted fields not handled correctly"
-    echo "Output:"
-    echo "$output3"
+    echo "Failed - Very long quoted fields not handled correctly"
 fi
 
 # Test 4: CSV with only quoted fields
@@ -68,11 +62,9 @@ EOF
 
 output4=$(tsv-align test_csv_all_quoted.csv)
 if echo "$output4" | grep -q "test,with,commas" && echo "$output4" | grep -q "another,test"; then
-    echo "✓ Test 4 PASSED: CSV with only quoted fields handled correctly"
+    echo "OK - CSV with only quoted fields handled correctly"
 else
-    echo "✗ Test 4 FAILED: CSV with only quoted fields not handled correctly"
-    echo "Output:"
-    echo "$output4"
+    echo "Failed - CSV with only quoted fields not handled correctly"
 fi
 
 # Test 5: CSV with empty file (just headers)
@@ -83,11 +75,9 @@ EOF
 
 output5=$(tsv-align test_csv_headers_only.csv)
 if echo "$output5" | grep -q "name" && echo "$output5" | grep -q "age" && echo "$output5" | grep -q "city"; then
-    echo "✓ Test 5 PASSED: CSV with only headers handled correctly"
+    echo "OK - CSV with only headers handled correctly"
 else
-    echo "✗ Test 5 FAILED: CSV with only headers not handled correctly"
-    echo "Output:"
-    echo "$output5"
+    echo "Failed - CSV with only headers not handled correctly"
 fi
 
 # Test 6: CSV with malformed quotes (unclosed quotes)
@@ -101,11 +91,9 @@ EOF
 # This should handle malformed quotes gracefully
 output6=$(tsv-align test_csv_malformed.csv 2>&1)
 if echo "$output6" | grep -q "Properly quoted"; then
-    echo "✓ Test 6 PASSED: Malformed quotes handled gracefully"
+    echo "OK - Malformed quotes handled gracefully"
 else
-    echo "✗ Test 6 FAILED: Malformed quotes not handled correctly"
-    echo "Output:"
-    echo "$output6"
+    echo "Failed - Malformed quotes not handled correctly"
 fi
 
 # Test 7: CSV with different quote characters (should still work with double quotes)
@@ -117,11 +105,9 @@ EOF
 
 output7=$(tsv-align test_csv_quotes.csv)
 if echo "$output7" | grep -q "Mixed 'quotes' inside" && echo "$output7" | grep -q "More \"nested\" quotes"; then
-    echo "✓ Test 7 PASSED: Different quote characters handled correctly"
+    echo "OK - Different quote characters handled correctly"
 else
-    echo "✗ Test 7 FAILED: Different quote characters not handled correctly"
-    echo "Output:"
-    echo "$output7"
+    echo "Failed - Different quote characters not handled correctly"
 fi
 
 # Test 8: Performance test with many fields
@@ -134,11 +120,9 @@ EOF
 
 output8=$(tsv-align test_csv_many_fields.csv)
 if echo "$output8" | grep -q "test1,with,commas" && echo "$output8" | grep -q "test10"; then
-    echo "✓ Test 8 PASSED: Many fields handled correctly"
+    echo "OK - Many fields handled correctly"
 else
-    echo "✗ Test 8 FAILED: Many fields not handled correctly"
-    echo "Output:"
-    echo "$output8"
+    echo "Failed - Many fields not handled correctly"
 fi
 
 # Cleanup test files
