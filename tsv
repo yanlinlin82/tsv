@@ -1081,6 +1081,49 @@ sub is_valid_xslx_ref
 	return 0;
 }
 
+sub parse_csv_line
+{
+	my ($line) = @_;
+	my @fields = ();
+	my $field = '';
+	my $in_quotes = 0;
+	my $i = 0;
+	
+	while ($i < length($line)) {
+		my $char = substr($line, $i, 1);
+		
+		if ($char eq '"') {
+			if ($in_quotes) {
+				# Check for escaped quote (double quote)
+				if ($i + 1 < length($line) && substr($line, $i + 1, 1) eq '"') {
+					$field .= '"';
+					$i += 2;  # Skip both quotes
+					next;
+				} else {
+					# End of quoted field
+					$in_quotes = 0;
+				}
+			} else {
+				# Start of quoted field
+				$in_quotes = 1;
+			}
+		} elsif ($char eq ',' && !$in_quotes) {
+			# Field separator (only outside quotes)
+			push @fields, $field;
+			$field = '';
+		} else {
+			$field .= $char;
+		}
+		
+		$i++;
+	}
+	
+	# Add the last field
+	push @fields, $field;
+	
+	return @fields;
+}
+
 sub load_tsv
 {
 	my ($filename, $no_header, $sep, $col) = @_;
@@ -1089,7 +1132,8 @@ sub load_tsv
 	die "Error: Input file '$filename' does not exist" unless -e $filename or is_valid_xslx_ref($filename);
 	my ($mod, $con) = ("<", $filename);
 	$sep = "\t" if not defined $sep or $sep eq '';
-	$sep = ',' if $filename =~ /\.csv(|\.gz|\.bz2)$/;
+	my $is_csv = $filename =~ /\.csv(|\.gz|\.bz2)$/;
+	$sep = ',' if $is_csv;
 	if (is_valid_xslx_ref($filename)) { return load_xlsx($filename, $no_header); }
 	if ($filename =~ /\.bed(|\.gz|\.bz2)$/) { return load_bed($filename); }
 	if ($filename =~ /\.psl(|\.gz|\.bz2)$/) { return load_psl($filename); }
@@ -1102,11 +1146,17 @@ sub load_tsv
 	}
 	while (my $line = <$fh>) {
 		chomp $line;
+		my @values;
+		if ($is_csv) {
+			@values = parse_csv_line($line);
+		} else {
+			@values = split($sep, $line, -1);
+		}
+		
 		if ($fh->input_line_number == 1 and not $no_header) {
-			@names = split($sep, $line, -1);
+			@names = @values;
 			@names = prepare_colnames(\@names, \%hash);
 		} else {
-			my @values = split($sep, $line, -1);
 			if ($#names < $#values) {
 				push @names, map { get_unique_name('', \%hash) } (($#names + 1) .. $#values)
 			}
