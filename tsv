@@ -67,7 +67,7 @@ if ($cmd eq $APPNAME) {
 	$cmd_prefix .= '-';
 }
 do_install() if $cmd eq 'install';
-do_test() if $cmd eq 'test';
+do_test($cmd, @ARGV) if $cmd eq 'test';
 print_usage() if $cmd eq 'help';
 die "Error: Unknown command '$cmd'" unless exists $DISPATCHER->{$cmd};
 exit $DISPATCHER->{$cmd}->($cmd, @ARGV);
@@ -235,7 +235,7 @@ sub parse_value
 	my ($token, $type) = ($cond->{token}, $cond->{type});
 	if ($token eq '(') {
 		read_next($cond);
-		$a = parse_or_expression($cond, $names);
+		my $a = parse_or_expression($cond, $names);
 		die_with $cond, "Error: Missing ')'" if $cond->{token} ne ')';
 		read_next($cond);
 		return $a;
@@ -285,7 +285,7 @@ sub parse_expression
 	my $a = parse_item($cond, $names);
 	while ($cond->{token}) {
 		my $op = $cond->{token};
-		last unless ($op eq '*' or $op eq '/' or $op eq '%');
+		last unless ($op eq '+' or $op eq '-');  # 修复：应该检查加减运算
 		read_next($cond);
 		my $b = parse_item($cond, $names);
 		$a = { type => 'expression', a => $a, op => $op, b => $b };
@@ -351,6 +351,10 @@ sub parse_or_expression
 sub parse_expression_new
 {
 	my ($expression, $names) = @_;
+
+	die "Error: Expression cannot be empty" if not defined $expression or $expression eq '';
+	die "Error: Names hash reference is required" if not defined $names or ref($names) ne 'HASH';
+	
 	my $p = { s => $expression, size => length($expression), pos => 0 };
 	my @stack = ('#');
 	my @postfix = ();
@@ -366,6 +370,8 @@ sub parse_expression_new
 		} elsif ($token eq '(') {
 			push @stack, '(';
 		} elsif ($token eq ')') {
+			# 安全检查：确保有匹配的左括号
+			die "Error: Unmatched right parenthesis" if $stack[$#stack] eq '#';
 			while ($stack[$#stack] ne '(') {
 				push @postfix, { type => 'op', val => pop @stack };
 			}
@@ -374,7 +380,8 @@ sub parse_expression_new
 			while ($PRECEDENCE{$token} <= $PRECEDENCE{$stack[$#stack]}) {
 				push @postfix, { type => 'op', val => pop @stack };
 			}
-			push @postfix, { type => 'dummy', val => '' } if $last_token_type eq 'op' or $last_token_type eq '';
+			# 暂时移除 dummy 类型的添加，因为它可能导致计算错误
+			# push @postfix, { type => 'dummy', val => '' } if $last_token_type eq 'op';
 			push @stack, $token;
 		}
 		$last_token_type = $p->{type};
@@ -405,6 +412,10 @@ sub eval_op
 		my $single_calc = {
 			'+' => sub { return $_[1]; },
 			'-' => sub { return -$_[1]; },
+			'*' => sub { return 0; },  # dummy * number = 0
+			'/' => sub { return 0; },  # dummy / number = 0
+			'%' => sub { return 0; },  # dummy % number = 0
+			'^' => sub { return 0; },  # dummy ^ number = 0
 		};
 		$proc = $single_calc->{$op};
 		$type = 'number';
@@ -413,8 +424,14 @@ sub eval_op
 			'+'  => sub { return $_[0] +  $_[1]; },
 			'-'  => sub { return $_[0] -  $_[1]; },
 			'*'  => sub { return $_[0] *  $_[1]; },
-			'/'  => sub { return $_[0] /  $_[1]; },
-			'%'  => sub { return $_[0] %  $_[1]; },
+			'/'  => sub { 
+				die "Error: Division by zero" if $_[1] == 0;
+				return $_[0] / $_[1]; 
+			},
+			'%'  => sub { 
+				die "Error: Modulo by zero" if $_[1] == 0;
+				return $_[0] % $_[1]; 
+			},
 			'^'  => sub { return $_[0] ** $_[1]; },
 			'<<' => sub { return $_[0] << $_[1]; },
 			'>>' => sub { return $_[0] >> $_[1]; },
@@ -458,11 +475,15 @@ sub eval_exp
 			push @stack, $e;
 		} else {
 			my $op = $e->{val};
+			# 安全检查：确保栈中有足够的操作数
+			die "Error: Insufficient operands for operator '$op'" if @stack < 2;
 			my $b = eval_val(pop(@stack), $item);
 			my $a = eval_val(pop(@stack), $item);
 			push @stack, eval_op($a, $op, $b);
 		}
 	}
+	# 安全检查：确保最终结果存在
+	die "Error: No result from expression evaluation" if @stack == 0;
 	return $stack[$#stack]->{val};
 }
 
@@ -775,6 +796,9 @@ sub build_filter
 	my ($conditions, $names) = @_;
 	my @filter = ();
 	for my $s (@{$conditions}) {
+		# 检查空表达式
+		die "Error: Expression cannot be empty" if not defined $s or $s eq '';
+		
 		my $cond = { s => $s, size => length($s), pos => 0 };
 		read_next($cond);
 		push @filter, parse_or_expression($cond, $names);
@@ -815,12 +839,43 @@ sub eval_filter
 			} else {
 				$n = ($a <=> $b);
 			}
-			return 0 unless eval($n . $cond->{op} . '0');
+			# 安全地比较数值，避免使用 eval()
+			if ($op eq '==') {
+				return ($n == 0);
+			} elsif ($op eq '!=') {
+				return ($n != 0);
+			} elsif ($op eq '>') {
+				return ($n > 0);
+			} elsif ($op eq '>=') {
+				return ($n >= 0);
+			} elsif ($op eq '<') {
+				return ($n < 0);
+			} elsif ($op eq '<=') {
+				return ($n <= 0);
+			} else {
+				die "Unexpected comparison operator '$op'";
+			}
 		}
 	} elsif ($cond->{type} eq 'expression') {
 		my $a = eval_filter($cond->{a}, $item);
 		my $b = eval_filter($cond->{b}, $item);
-		return eval($a . $cond->{op} . $b);
+		# 安全地计算表达式，避免使用 eval()
+		my $op = $cond->{op};
+		if ($op eq '+') {
+			return $a + $b;
+		} elsif ($op eq '-') {
+			return $a - $b;
+		} elsif ($op eq '*') {
+			return $a * $b;
+		} elsif ($op eq '/') {
+			return $b != 0 ? $a / $b : die "Error: Division by zero";
+		} elsif ($op eq '%') {
+			return $b != 0 ? $a % $b : die "Error: Modulo by zero";
+		} elsif ($op eq '^') {
+			return $a ** $b;
+		} else {
+			die "Unexpected arithmetic operator '$op'";
+		}
 	} else {
 		my ($val, $type) = ($cond->{val}, $cond->{type});
 		$val = $item->{$val} if $type eq 'symbol';
@@ -2443,23 +2498,132 @@ sub do_install
 
 sub do_test
 {
+	my ($cmd, @args) = @_;
+	
+	# 解析测试命令的参数
+	my $test_verbose = 0;
+	my $opts = {
+		'-v' => sub { $test_verbose = 1; },
+		'--verbose' => sub { $test_verbose = 1; },
+	};
+	
+	# 解析参数
+	for my $arg (@args) {
+		if ($arg eq '-v' or $arg eq '--verbose') {
+			$test_verbose = 1;
+		} elsif ($arg eq '-h' or $arg eq '--help') {
+			print STDERR "Usage: $cmd [options]\n";
+			print STDERR "Options:\n";
+			print STDERR "  -v, --verbose    Show detailed test output\n";
+			print STDERR "  -h, --help       Show this help message\n";
+			exit 0;
+		}
+	}
+	
 	my ($total, $ok, $failed) = (0, 0, 0);
 	chdir(dirname($0));
-	foreach my $script (glob("test/*.sh")) {
-		print STDERR "$script\n";
+	
+	# 获取所有测试脚本并按名称排序
+	my @scripts = sort glob("test/*.sh");
+	
+	if ($test_verbose > 0) {
+		print STDERR "==========================================\n";
+		print STDERR "Running Test Suite\n";
+		print STDERR "==========================================\n";
+		print STDERR "Found " . scalar(@scripts) . " test script(s):\n";
+		for my $script (@scripts) {
+			print STDERR "  - $script\n";
+		}
+		print STDERR "\n";
+	}
+	
+	foreach my $script (@scripts) {
+		if ($test_verbose > 0) {
+			print STDERR "==========================================\n";
+			print STDERR "Running: $script\n";
+			print STDERR "==========================================\n";
+		} else {
+			print STDERR "$script\n";
+		}
+		
 		open my $fh, "-|", $script or die "Error: Can not execute script '$script'!";
+		my $script_ok = 0;
+		my $script_failed = 0;
+		
 		while (my $line = <$fh>) {
+			chomp $line;
 			if ($line =~ /^OK/) {
 				$total++;
 				$ok++;
+				$script_ok++;
+				if ($test_verbose > 0) {
+					print STDERR "✅ $line\n";
+				} else {
+					print STDERR ". $line\n";
+				}
 			} elsif ($line =~ /^Failed/) {
 				$total++;
 				$failed++;
+				$script_failed++;
+				if ($test_verbose > 0) {
+					print STDERR "❌ $line\n";
+				} else {
+					print STDERR ". $line\n";
+				}
+			} elsif ($test_verbose > 0) {
+				# 显示测试进度和详细信息
+				if ($line =~ /^Test \d+:/) {
+					print STDERR "\n🔍 $line\n";
+				} elsif ($line =~ /^Testing/) {
+					print STDERR "\n📋 $line\n";
+				} elsif ($line =~ /^Error:/) {
+					print STDERR "💥 $line\n";
+				} elsif ($line =~ /^Warning:/) {
+					print STDERR "⚠️  $line\n";
+				} elsif ($line =~ /^OK -/) {
+					print STDERR "  ✅ $line\n";
+				} elsif ($line =~ /^Failed -/) {
+					print STDERR "  ❌ $line\n";
+				} elsif ($line =~ /^Security fixes testing completed/) {
+					print STDERR "\n🏁 $line\n";
+				} elsif ($line =~ /^Expression parser testing completed/) {
+					print STDERR "\n🏁 $line\n";
+				} elsif ($line =~ /^Security vulnerability testing completed/) {
+					print STDERR "\n🏁 $line\n";
+				} elsif ($line =~ /^Test cleanup completed/) {
+					print STDERR "\n🧹 $line\n";
+				} else {
+					print STDERR "  $line\n";
+				}
 			}
-			print ". $line" if $verbose;
 		}
 		close $fh;
+		
+		if ($test_verbose > 0) {
+			print STDERR "\n📊 Script Summary: $script\n";
+			print STDERR "  Passed: $script_ok, Failed: $script_failed\n";
+			if ($script_failed > 0) {
+				print STDERR "  ⚠️  Some tests failed in this script\n";
+			} else {
+				print STDERR "  🎉 All tests passed in this script\n";
+			}
+			print STDERR "\n";
+		}
 	}
-	print STDERR "Total $total test(s), $ok passed and $failed failed.\n";
-	exit 0;
+	
+	print STDERR "==========================================\n";
+	print STDERR "Final Test Results\n";
+	print STDERR "==========================================\n";
+	print STDERR "Total: $total test(s)\n";
+	print STDERR "Passed: $ok\n";
+	print STDERR "Failed: $failed\n";
+	
+	if ($failed == 0) {
+		print STDERR "🎉 All tests passed!\n";
+	} else {
+		print STDERR "❌ $failed test(s) failed. Please review the output above.\n";
+	}
+	print STDERR "==========================================\n";
+	
+	exit ($failed > 0 ? 1 : 0);
 }
