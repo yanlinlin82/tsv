@@ -26,9 +26,9 @@ chmod +x tsv
 Install dependencies:
 
 ```sh
-# sudo apt install carton
-carton install
-alias tsv='carton exec -- tsv'
+sudo apt install cpanm
+cpanm Excel::Writer::XLSX
+cpanm Spreadsheet::XLSX
 ```
 
 ## Supported Functions
