@@ -8,7 +8,7 @@ This toolkit is written by Perl, with minimum dependency on 3rd party packages/l
 
 The recommended way to install 'tsv' is by clone it from GitHub:
 
-```
+```sh
 git clone https://github.com/yanlinlin82/tsv
 ```
 
@@ -16,16 +16,24 @@ and then add the 'tsv' directory to your environment variable PATH.
 
 Alternatively, you can download only the 'tsv' file to any directory you want (and also add the directory to PATH):
 
-```
+```sh
 # cd <any-path-you-want-to-put-tsv-in>
 wget -N https://raw.githubusercontent.com/yanlinlin82/tsv/master/tsv
 chmod +x tsv
 ./tsv install # this command will create symbolic links to assist command line operations
 ```
 
+Install dependencies:
+
+```sh
+# sudo apt install carton
+carton install
+alias tsv='carton exec -- tsv'
+```
+
 ## Supported Functions
 
-```
+```txt
 - Viewing
     cat           show original content
     align         align columns
